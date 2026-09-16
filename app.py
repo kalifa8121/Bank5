@@ -1166,7 +1166,7 @@ def statement(cust_id):
         return "Maammilli Hin Argamne", 404
 
     # Apply 10 statement printing commission deduction if requested or viewed
-    statement_comm = c['balance']
+    statement_comm = c['balance'] * 0.00001
 
     query = """
         SELECT txn_id, txn_type, amount, commission, ft_reference, status, created_by, timestamp, customer_id, target_account
