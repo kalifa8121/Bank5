@@ -1795,7 +1795,10 @@ def pending():
     for t in pend_txns:
         # Rule 11: Manager fi auditor yeroo transaction approve/reject godhan odefannoo maamilaa (suuraa mallattoo) view godhanii ilaaluu dandauu
         conn_tmp = get_db_connection()
-        c_info = conn_tmp.execute("SELECT photo_path, signature_path FROM customers WHERE customer_id = ?", (t['customer_id'],)).fetchone()
+        tmp_cursor = conn_tmp.cursor()
+        tmp_cursor.execute("SELECT photo_path, signature_path FROM customers WHERE customer_id = ?", (t['customer_id'],))
+        c_info = tmp_cursor.fetchone()
+        tmp_cursor.close()
         conn_tmp.close()
         
         photo_view = f'<a href="/uploads/{c_info["photo_path"]}" target="_blank"><img src="/uploads/{c_info["photo_path"]}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;"></a>' if c_info and c_info['photo_path'] else ''
