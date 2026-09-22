@@ -1,6 +1,10 @@
 import os
+import sqlite3  # kept for legacy backup compatibility
+import subprocess
+
 import psycopg2
-import psycopg2.extras
+from psycopg2 import OperationalError as PostgreSQLOperationalError
+from psycopg2.extras import DictCursor
 import datetime
 import random
 import shutil
@@ -19,14 +23,12 @@ from flask import Flask, request, redirect, url_for, session, render_template_st
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "development-secret-key")
+app.secret_key = os.environ.get("SECRET_KEY", "imana_free_interest_microfinance_secret_key")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 BACKUP_FOLDER = os.path.join(BASE_DIR, 'backups')
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set")
+DB_PATH = os.path.join(BASE_DIR, "web_banking.db")
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'pdf'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -58,32 +60,45 @@ def compress_and_save_image(file_storage, target_filename, max_size=(300, 300), 
         file_storage.save(filepath)
         return target_filename
 
-class NeonCursor(psycopg2.extras.DictCursor):
-    """Compatibility cursor: keeps the existing SQLite-style ? placeholders working."""
+def _translate_sql_placeholders(sql):
+    """Keep the original SQLite-style ? placeholders while using PostgreSQL.
+    This lets the existing application SQL continue working without changing
+    every route/query in the original code.
+    """
+    return sql.replace("?", "%s")
+
+
+class CompatiblePostgresCursor(DictCursor):
+    """PostgreSQL cursor compatible with the original ? SQL placeholders."""
     def execute(self, query, vars=None):
-        query = query.replace("?", "%s")
-        return super().execute(query, vars)
+        return super().execute(_translate_sql_placeholders(query), vars)
 
     def executemany(self, query, vars_list):
-        query = query.replace("?", "%s")
-        return super().executemany(query, vars_list)
+        return super().executemany(_translate_sql_placeholders(query), vars_list)
+
 
 def get_db_connection(max_retries=10, delay=0.5):
-    """Connect to Neon PostgreSQL with the same cursor-style interface used by the app."""
-    last_error = None
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    if not database_url:
+        raise RuntimeError("DATABASE_URL environment variable is not set")
+
     for attempt in range(max_retries):
         try:
             conn = psycopg2.connect(
-                DATABASE_URL,
-                connect_timeout=30,
-                cursor_factory=NeonCursor
+                database_url,
+                connect_timeout=15,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5,
+                cursor_factory=CompatiblePostgresCursor,
             )
             return conn
-        except psycopg2.OperationalError as e:
-            last_error = e
+        except PostgreSQLOperationalError as e:
             if attempt < max_retries - 1:
                 time.sleep(delay)
-    raise last_error
+            else:
+                raise e
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -114,21 +129,34 @@ def add_notification(message):
         NOTIFICATIONS.pop()
 
 def perform_auto_backup():
-    # Database persistence is handled by Neon PostgreSQL.
-    # Keep this function so existing application shutdown behavior remains safe.
+    """Best-effort PostgreSQL backup.
+
+    Neon is the persistent database; if pg_dump is available, keep the
+    original auto-backup behavior by creating a SQL backup file.
+    """
     try:
-        if DATABASE_URL:
-            print("💾 Neon PostgreSQL persistence is active; local SQLite backup is not used.")
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        pg_dump = shutil.which("pg_dump")
+        if not database_url or not pg_dump:
+            print("ℹ️ Neon PostgreSQL is active; local SQLite backup skipped.")
+            return
+
+        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file_path = os.path.join(BACKUP_FOLDER, f"auto_backup_{now_str}.sql")
+        latest_path = os.path.join(BACKUP_FOLDER, "latest_auto_backup.sql")
+
+        with open(backup_file_path, "wb") as out_file:
+            subprocess.run([pg_dump, database_url, "--no-owner", "--no-acl"],
+                           stdout=out_file, stderr=subprocess.PIPE, check=True)
+        shutil.copyfile(backup_file_path, latest_path)
+        print("💾 PostgreSQL auto backup completed.")
     except Exception as e:
-        print(f"❌ Backup status error: {e}")
+        print(f"❌ PostgreSQL Auto Backup failed: {e}")
+
 
 def perform_auto_restore():
-    # Neon is the persistent source of truth; no local SQLite restore is required.
-    try:
-        if DATABASE_URL:
-            print("🔄 Neon PostgreSQL persistence is active; local SQLite restore is not used.")
-    except Exception as e:
-        print(f"❌ Restore status error: {e}")
+    """Neon is the source of truth; no SQLite restore is performed."""
+    print("ℹ️ Neon PostgreSQL restore is handled by the database service; local SQLite restore skipped.")
 
 perform_auto_restore()
 atexit.register(perform_auto_backup)
@@ -1171,7 +1199,7 @@ def statement(cust_id):
         return "Maammilli Hin Argamne", 404
 
     # Apply 10 statement printing commission deduction if requested or viewed
-    statement_comm = c['balance']
+    statement_comm = c['balance'] * 0.00001
 
     query = """
         SELECT txn_id, txn_type, amount, commission, ft_reference, status, created_by, timestamp, customer_id, target_account
