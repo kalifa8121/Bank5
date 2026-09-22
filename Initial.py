@@ -1,5 +1,6 @@
 import os
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import datetime
 import random
 import shutil
@@ -18,12 +19,14 @@ from flask import Flask, request, redirect, url_for, session, render_template_st
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = "imana_free_interest_microfinance_secret_key"
+app.secret_key = os.environ.get("SECRET_KEY", "development-secret-key")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 BACKUP_FOLDER = os.path.join(BASE_DIR, 'backups')
-DB_PATH = os.path.join(BASE_DIR, "web_banking.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL environment variable is not set")
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'pdf'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -55,22 +58,32 @@ def compress_and_save_image(file_storage, target_filename, max_size=(300, 300), 
         file_storage.save(filepath)
         return target_filename
 
+class NeonCursor(psycopg2.extras.DictCursor):
+    """Compatibility cursor: keeps the existing SQLite-style ? placeholders working."""
+    def execute(self, query, vars=None):
+        query = query.replace("?", "%s")
+        return super().execute(query, vars)
+
+    def executemany(self, query, vars_list):
+        query = query.replace("?", "%s")
+        return super().executemany(query, vars_list)
+
 def get_db_connection(max_retries=10, delay=0.5):
+    """Connect to Neon PostgreSQL with the same cursor-style interface used by the app."""
+    last_error = None
     for attempt in range(max_retries):
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=60)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            conn.execute("PRAGMA busy_timeout = 30000;")
-            conn.execute("PRAGMA cache_size = -64000;")
-            conn.execute("PRAGMA mmap_size = 268435456;")
+            conn = psycopg2.connect(
+                DATABASE_URL,
+                connect_timeout=30,
+                cursor_factory=NeonCursor
+            )
             return conn
-        except sqlite3.OperationalError as e:
+        except psycopg2.OperationalError as e:
+            last_error = e
             if attempt < max_retries - 1:
                 time.sleep(delay)
-            else:
-                raise e
+    raise last_error
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -101,29 +114,21 @@ def add_notification(message):
         NOTIFICATIONS.pop()
 
 def perform_auto_backup():
+    # Database persistence is handled by Neon PostgreSQL.
+    # Keep this function so existing application shutdown behavior remains safe.
     try:
-        now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file_path = os.path.join(BACKUP_FOLDER, f"auto_backup_{now_str}.db")
-        latest_path = os.path.join(BACKUP_FOLDER, "latest_auto_backup.db")
-        
-        if os.path.exists(DB_PATH):
-            with sqlite3.connect(DB_PATH) as src_conn:
-                with sqlite3.connect(backup_file_path) as dst_conn:
-                    src_conn.backup(dst_conn)
-                with sqlite3.connect(latest_path) as dst_conn2:
-                    src_conn.backup(dst_conn2)
-            print("💾 Auto Backup completed.")
+        if DATABASE_URL:
+            print("💾 Neon PostgreSQL persistence is active; local SQLite backup is not used.")
     except Exception as e:
-        print(f"❌ Auto Backup failed: {e}")
+        print(f"❌ Backup status error: {e}")
 
 def perform_auto_restore():
-    latest_path = os.path.join(BACKUP_FOLDER, "latest_auto_backup.db")
-    if not os.path.exists(DB_PATH) and os.path.exists(latest_path):
-        try:
-            shutil.copyfile(latest_path, DB_PATH)
-            print("🔄 Persistent Auto Restore completed.")
-        except Exception as e:
-            print(f"❌ Auto Restore failed: {e}")
+    # Neon is the persistent source of truth; no local SQLite restore is required.
+    try:
+        if DATABASE_URL:
+            print("🔄 Neon PostgreSQL persistence is active; local SQLite restore is not used.")
+    except Exception as e:
+        print(f"❌ Restore status error: {e}")
 
 perform_auto_restore()
 atexit.register(perform_auto_backup)
@@ -226,54 +231,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if 'role' not in session or session['role'] != 'MAKER':
-        return "🚫 Shoora MAKER qofatu maammila galmeessuu danda'a", 403
-
-    msg = None
-    if request.method == 'POST':
-        full_name = request.form.get('full_name').strip()
-        phone = request.form.get('phone').strip()
-        gender = request.form.get('gender')
-        account_type = request.form.get('account_type')
-        initial_balance = max(0.0, float(request.form.get('initial_balance', 0.0)))
-        photo_file = request.files.get('photo')
-        sig_file = request.files.get('signature')
-
-        if photo_file and sig_file and allowed_file(photo_file.filename) and allowed_file(sig_file.filename):
-            timestamp_str = int(datetime.datetime.now().timestamp())
-            photo_filename = compress_and_save_image(photo_file, f"face_{timestamp_str}_" + secure_filename(photo_file.filename))
-            sig_filename = compress_and_save_image(sig_file, f"sig_{timestamp_str}_" + secure_filename(sig_file.filename))
-
-            START_ID = 100099008800
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT MAX(CAST(customer_id AS INTEGER)) FROM customers WHERE customer_id >= '100099008800'")
-            max_id = cursor.fetchone()[0]
-            cust_id = str(START_ID) if max_id is None or max_id < START_ID else str(max_id + 1)
-            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            # Maammila 'balance=0.0' uumna, sababiin isaa maallaqni hafe 'APPROVED' yoo ta'e dabalama
-            cursor.execute("""
-                INSERT INTO customers (customer_id, full_name, phone, gender, account_type, photo_path, signature_path, balance, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 'PENDING_APPROVAL', ?)
-            """, (cust_id, full_name, phone, gender, account_type, photo_filename, sig_filename, now))
-
-            # SIRA HAARAA: Maallaqa jalqabaa akka 'DEPOSIT' galmeessuu fi Txn ID kennuuf
-            if initial_balance > 0:
-                ft_ref = f"INIT{datetime.datetime.now().strftime('%y%j')}{random.randint(10000, 99999)}"
-                txn_id = f"TXN-INIT-{timestamp_str}"
-                cursor.execute("""
-                    INSERT INTO transactions (txn_id, txn_type, customer_id, customer_name, amount, commission, bank_name, ft_reference, status, created_by, timestamp)
-                    VALUES (?, 'DEPOSIT', ?, ?, ?, 0.0, 'Imana Core Bank', ?, 'PENDING_MANAGER', ?, ?)
-                """, (txn_id, cust_id, full_name, initial_balance, ft_ref, session['username'], now))
-
-            conn.commit()
-            conn.close()
-            msg = f"⚡ Maammilli {full_name} galmee eegaa jira. Maallaqni jalqabaa {initial_balance} Birr Txn ID: {txn_id} kanaan galmaa'eera. Manager-ni dursa eeyyamsiisaa!"
-
 
 def get_bank_capital():
     conn = get_db_connection()
@@ -944,7 +901,7 @@ def agent_register():
             START_ID = 100099008800
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT MAX(CAST(customer_id AS INTEGER)) FROM customers WHERE customer_id >= '100099008800'")
+            cursor.execute("SELECT MAX(CAST(customer_id AS BIGINT)) FROM customers WHERE customer_id >= '100099008800'")
             max_id = cursor.fetchone()[0]
             cust_id = str(START_ID) if max_id is None or max_id < START_ID else str(max_id + 1)
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1213,8 +1170,8 @@ def statement(cust_id):
         conn.close()
         return "Maammilli Hin Argamne", 404
 
-    # Apply 1% statement printing commission deduction if requested or viewed
-    statement_comm = c['balance'] * 0.01
+    # Apply 10 statement printing commission deduction if requested or viewed
+    statement_comm = c['balance']
 
     query = """
         SELECT txn_id, txn_type, amount, commission, ft_reference, status, created_by, timestamp, customer_id, target_account
@@ -1944,6 +1901,7 @@ def ceo_mudaraba_list():
     """
     return render_template_string(HTML_LAYOUT.replace("{% block content %}{% endblock %}", content), notifications=NOTIFICATIONS)
 
+
 # --- RULE 6: KUTAA MAAMMILA GALMEESSUU (MAKER) ---
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -1968,18 +1926,30 @@ def register():
             START_ID = 100099008800
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT MAX(CAST(customer_id AS INTEGER)) FROM customers WHERE customer_id >= '100099008800'")
+            cursor.execute("SELECT MAX(CAST(customer_id AS BIGINT)) FROM customers WHERE customer_id >= '100099008800'")
             max_id = cursor.fetchone()[0]
             cust_id = str(START_ID) if max_id is None or max_id < START_ID else str(max_id + 1)
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+            # Maammila 'balance=0.0' uumna, sababiin isaa maallaqni hafe 'APPROVED' yoo ta'e dabalama
             cursor.execute("""
                 INSERT INTO customers (customer_id, full_name, phone, gender, account_type, photo_path, signature_path, balance, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_APPROVAL', ?)
-            """, (cust_id, full_name, phone, gender, account_type, photo_filename, sig_filename, initial_balance, now))
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0.0, 'PENDING_APPROVAL', ?)
+            """, (cust_id, full_name, phone, gender, account_type, photo_filename, sig_filename, now))
+
+            # SIRA HAARAA: Maallaqa jalqabaa akka 'DEPOSIT' galmeessuu fi Txn ID kennuuf
+            if initial_balance > 0:
+                ft_ref = f"INIT{datetime.datetime.now().strftime('%y%j')}{random.randint(10000, 99999)}"
+                txn_id = f"TXN-INIT-{timestamp_str}"
+                cursor.execute("""
+                    INSERT INTO transactions (txn_id, txn_type, customer_id, customer_name, amount, commission, bank_name, ft_reference, status, created_by, timestamp)
+                    VALUES (?, 'DEPOSIT', ?, ?, ?, 0.0, 'Imana Core Bank', ?, 'PENDING_MANAGER', ?, ?)
+                """, (txn_id, cust_id, full_name, initial_balance, ft_ref, session['username'], now))
+
             conn.commit()
             conn.close()
-            msg = f"⚡ Maammilli {full_name} ({account_type}) dafee galmaa'eera! (Acc: {cust_id})."
+            msg = f"⚡ Maammilli {full_name} galmee eegaa jira. Maallaqni jalqabaa {initial_balance} Birr Txn ID: {txn_id} kanaan galmaa'eera. Manager-ni dursa eeyyamsiisaa!"
+            add_notification(f"Maammilli haaraan ({full_name}) galmaa'eera.")
 
     content = f"""
     <div class="box">
@@ -2267,4 +2237,4 @@ def islamic_loan():
     return render_template_string(HTML_LAYOUT.replace("{% block content %}{% endblock %}", content), notifications=NOTIFICATIONS)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
