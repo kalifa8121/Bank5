@@ -2397,5 +2397,16 @@ def mobile_etopup():
         else:
             conn=get_db_connection();cur=conn.cursor()
             try:
-                ref=mobile_new_ref('TOP');now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S');cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,co
-Preview truncated for large file
+                ref=mobile_new_ref('TOP');now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S');cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,commission,bank_name,ft_reference,status,created_by,timestamp) VALUES (?,?,?,?,?,?,?,?,?,'PENDING_PROVIDER',?,?)",(ref,'ETOPUP',c['customer_id'],c['full_name'],phone,amount,0,provider or 'ETOPUP',ref,'MOBILE',now));conn.commit();msg=f'<div class="msg">✅ E-topup gaaffiin galmaa’e. Ref: <b>{ref}</b>.</div>'
+            except Exception as e:conn.rollback();msg='<div class="msg err">❌ E-topup galmeessuu hin dandeenye.</div>';print(e)
+            finally:conn.close()
+    body=msg+'''<div class="card"><h3>📱 E-Topup</h3><form method="POST"><label>Phone</label><input name="phone" required><label>Telecom/Provider</label><input name="provider"><label>Amount</label><input name="amount" type="number" step="0.01" min="1" required><button class="btn">Topup Gaafadhu</button></form></div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page('E-Topup',body)
+
+@app.route('/m/statement')
+def mobile_statement():
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT txn_type,target_account,amount,status,ft_reference,timestamp FROM transactions WHERE customer_id=? ORDER BY timestamp DESC LIMIT 100",(c['customer_id'],));rows=cur.fetchall();conn.close();rows_html=''.join([f'<div class="row"><div><b>{r["txn_type"]}</b><br><span class="muted">{r["timestamp"]} | {r["ft_reference"]}</span></div><div><b>{float(r["amount"] or 0):,.2f}</b><br><span class="muted">{r["status"]}</span></div></div>' for r in rows]);body=f'''<div class="card"><h3>📄 Statement</h3><div class="row"><b>Balance</b><b>{float(c['balance'] or 0):,.2f} Birr</b></div>{rows_html or '<p class="muted">Statement hin jiru.</p>'}</div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page('Statement',body)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
