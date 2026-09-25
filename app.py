@@ -21,6 +21,7 @@ except ImportError:
 
 from flask import Flask, request, redirect, url_for, session, render_template_string, send_from_directory, jsonify, send_file
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "imana_free_interest_microfinance_secret_key")
@@ -203,6 +204,10 @@ def init_db():
             created_at TEXT
         )
     """)
+
+    cursor.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile_pin_hash TEXT")
+    cursor.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile_status TEXT DEFAULT 'ACTIVE'")
+    cursor.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile_last_login TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS transactions (
@@ -2266,6 +2271,142 @@ def islamic_loan():
     </div>
     """
     return render_template_string(HTML_LAYOUT.replace("{% block content %}{% endblock %}", content), notifications=NOTIFICATIONS)
+
+# CUSTOMER MOBILE BANKING PORTAL
+# Existing staff/manager/auditor/maker routes are preserved.
+
+def mobile_page(title, body):
+    html = f'''<!doctype html><html lang="om"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>{title}</title><style>
+*{{box-sizing:border-box}}body{{margin:0;font-family:Arial;background:#f1f5f9;color:#0f172a}}.top{{background:#065f46;color:white;padding:18px;position:sticky;top:0}}.top h2{{margin:0;font-size:18px}}.wrap{{max-width:520px;margin:auto;padding:14px}}.card{{background:#fff;border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:0 2px 10px #0001}}.balance{{background:#065f46;color:white;border-radius:18px;padding:20px;margin-bottom:14px}}.amount{{font-size:30px;font-weight:800;margin-top:8px}}.grid{{display:grid;grid-template-columns:1fr 1fr;gap:10px}}.btn{{display:block;width:100%;border:0;border-radius:12px;padding:13px;font-weight:700;text-decoration:none;text-align:center;background:#065f46;color:white;margin-top:10px}}.btn.alt{{background:#e2e8f0;color:#0f172a}}label{{display:block;font-size:12px;font-weight:700;margin:10px 0 5px}}input,select,textarea{{width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px}}.msg{{padding:11px;border-radius:10px;background:#dcfce7;color:#166534;margin-bottom:12px;font-size:13px;font-weight:700}}.err{{background:#fee2e2;color:#991b1b}}.row{{display:flex;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid #e2e8f0;font-size:12px}}.muted{{color:#64748b;font-size:12px}}
+</style></head><body><div class="top"><h2>🏦 Imana Mobile Banking</h2><small>{title}</small></div><div class="wrap">{body}</div></body></html>'''
+    return render_template_string(html)
+
+def mobile_login_form():
+    return '''<div class="card"><h3>Seeni</h3><form method="POST"><label>Customer ID</label><input name="customer_id" required><label>PIN</label><input name="pin" type="password" inputmode="numeric" maxlength="8" required><button class="btn">Seeni</button></form><a class="btn alt" href="/m/register">Mobile Banking galmeessi</a></div>'''
+
+def mobile_customer():
+    cid=session.get('mobile_customer_id')
+    if not cid:return None
+    conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT * FROM customers WHERE customer_id=?",(cid,));c=cur.fetchone();conn.close();return c
+
+def mobile_new_ref(prefix):
+    return f"{prefix}{datetime.datetime.now().strftime('%y%m%d%H%M%S')}{random.randint(100,999)}"
+
+def mobile_balance_ok(c,amount):
+    return float(c['balance'] or 0)>=float(amount) and c['freeze_status']!='FROZEN'
+
+@app.route('/m/login',methods=['GET','POST'])
+def mobile_login():
+    if request.method=='POST':
+        cid=request.form.get('customer_id','').strip();pin=request.form.get('pin','').strip()
+        conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT customer_id,full_name,mobile_pin_hash,mobile_status,status FROM customers WHERE customer_id=?",(cid,));c=cur.fetchone()
+        if c and c['status']=='ACTIVE' and c['mobile_status']=='ACTIVE' and c['mobile_pin_hash'] and check_password_hash(c['mobile_pin_hash'],pin):
+            session.clear();session['mobile_customer_id']=c['customer_id'];session['mobile_customer_name']=c['full_name'];cur.execute("UPDATE customers SET mobile_last_login=? WHERE customer_id=?",(datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),cid));conn.commit();conn.close();return redirect('/m')
+        conn.close();return mobile_page('Login','<div class="msg err">❌ Customer ID ykn PIN sirrii miti.</div>'+mobile_login_form())
+    return mobile_page('Login',mobile_login_form())
+
+@app.route('/m/register',methods=['GET','POST'])
+def mobile_register():
+    msg=''
+    if request.method=='POST':
+        cid=request.form.get('customer_id','').strip();phone=request.form.get('phone','').strip();pin=request.form.get('pin','').strip();confirm=request.form.get('confirm_pin','').strip()
+        if len(pin)<4 or pin!=confirm:msg='<div class="msg err">❌ PIN lama wal fakkaachuu qaba.</div>'
+        else:
+            conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT customer_id,status FROM customers WHERE customer_id=? AND phone=?",(cid,phone));c=cur.fetchone()
+            if not c or c['status']!='ACTIVE':msg='<div class="msg err">❌ Customer ID fi phone wal hin simne.</div>'
+            else:cur.execute("UPDATE customers SET mobile_pin_hash=?,mobile_status='ACTIVE' WHERE customer_id=?",(generate_password_hash(pin),cid));conn.commit();conn.close();return redirect('/m/login')
+            conn.close()
+    body=msg+'''<div class="card"><h3>Mobile Banking Galmeessi</h3><form method="POST"><label>Customer ID</label><input name="customer_id" required><label>Phone</label><input name="phone" required><label>PIN</label><input name="pin" type="password" inputmode="numeric" maxlength="8" required><label>PIN irra deebi'i</label><input name="confirm_pin" type="password" inputmode="numeric" maxlength="8" required><button class="btn">Galmeessi</button></form></div><a class="btn alt" href="/m/login">← Login</a>'''
+    return mobile_page('Mobile Registration',body)
+
+@app.route('/m/logout')
+def mobile_logout():session.clear();return redirect('/m/login')
+
+@app.route('/m')
+def mobile_dashboard():
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    body=f'''<div class="balance"><div>{c['full_name']}</div><div>Account: {c['customer_id']}</div><div class="amount">{float(c['balance'] or 0):,.2f} Birr</div><div>Available Balance</div></div><div class="grid"><a class="btn" href="/m/send">💸 Qarshii Ergi</a><a class="btn" href="/m/withdraw">💵 Qarshii Baasi</a><a class="btn" href="/m/wallet">👛 Wallet</a><a class="btn" href="/m/bank-transfer">🏦 Bank Biroo</a><a class="btn" href="/m/etopup">📱 E-Topup</a><a class="btn" href="/m/statement">📄 Statement</a></div><a class="btn alt" href="/m/logout">Ba'i</a>'''
+    return mobile_page('Dashboard',body)
+
+@app.route('/m/send',methods=['GET','POST'])
+def mobile_send():
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    msg=''
+    if request.method=='POST':
+        target=request.form.get('target_account','').strip();amount=float(request.form.get('amount','0') or 0)
+        conn=get_db_connection();cur=conn.cursor()
+        try:
+            cur.execute("SELECT * FROM customers WHERE customer_id=? AND status='ACTIVE'",(target,));t=cur.fetchone()
+            if target==c['customer_id'] or not t:msg='<div class="msg err">❌ Recipient hin argamne.</div>'
+            elif amount<=0 or not mobile_balance_ok(c,amount):msg='<div class="msg err">❌ Amount ykn balance sirrii miti.</div>'
+            else:
+                ref=mobile_new_ref('MS');now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S');cur.execute("UPDATE customers SET balance=balance-? WHERE customer_id=?",(amount,c['customer_id']));cur.execute("UPDATE customers SET balance=balance+? WHERE customer_id=?",(amount,target));cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,commission,bank_name,ft_reference,status,created_by,timestamp) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?)",(ref+'O','MOBILE_SEND',c['customer_id'],c['full_name'],target,amount,0,'Imana Mobile',ref,'MOBILE',now));cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,commission,bank_name,ft_reference,status,created_by,timestamp) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?)",(ref+'I','MOBILE_RECEIVE',target,t['full_name'],c['customer_id'],amount,0,'Imana Mobile',ref,'MOBILE',now));conn.commit();msg=f'<div class="msg">✅ Ergameera. Ref: {ref}</div>'
+        except Exception as e:conn.rollback();msg='<div class="msg err">❌ Transfer irratti dogoggorri uumame.</div>';print(e)
+        finally:conn.close()
+    body=msg+'''<div class="card"><h3>💸 Qarshii Ergi</h3><form method="POST"><label>Recipient Customer ID</label><input name="target_account" required><label>Amount</label><input name="amount" type="number" step="0.01" min="1" required><button class="btn">Ergi</button></form></div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page('Qarshii Ergi',body)
+
+@app.route('/m/withdraw',methods=['GET','POST'])
+def mobile_withdraw():
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    msg=''
+    if request.method=='POST':
+        amount=float(request.form.get('amount','0') or 0)
+        if amount<=0 or not mobile_balance_ok(c,amount):msg='<div class="msg err">❌ Balance gahaa miti ykn frozen.</div>'
+        else:
+            conn=get_db_connection();cur=conn.cursor()
+            try:
+                ref=mobile_new_ref('CW');now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S');cur.execute("UPDATE customers SET balance=balance-? WHERE customer_id=?",(amount,c['customer_id']));cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,commission,bank_name,ft_reference,status,created_by,timestamp) VALUES (?,?,?,?,?,?,?,?,?,'APPROVED',?,?)",(ref,'MOBILE_CASH_WITHDRAWAL',c['customer_id'],c['full_name'],'CASH',amount,0,'Imana Mobile',ref,'MOBILE',now));conn.commit();msg=f'<div class="msg">✅ Withdrawal galmaa’e. Ref: <b>{ref}</b>. Agentitti agarsiisi.</div>'
+            except Exception as e:conn.rollback();msg='<div class="msg err">❌ Withdrawal dogoggora.</div>';print(e)
+            finally:conn.close()
+    body=msg+'''<div class="card"><h3>💵 Qarshii Baasi</h3><p class="muted">Balance irraa hir'ata; cash argachuuf reference kana agentitti agarsiisi.</p><form method="POST"><label>Amount</label><input name="amount" type="number" step="0.01" min="1" required><button class="btn">Baasi</button></form></div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page('Qarshii Baasi',body)
+
+@app.route('/m/wallet',methods=['GET','POST'])
+def mobile_wallet():return mobile_external('WALLET_TRANSFER','👛 Wallet Ergi','Wallet ID/Phone')
+
+@app.route('/m/bank-transfer',methods=['GET','POST'])
+def mobile_bank_transfer():return mobile_external('BANK_TRANSFER','🏦 Bank Birootti Ergi','Account Number')
+
+def mobile_external(kind,title,label):
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    msg=''
+    if request.method=='POST':
+        target=request.form.get('target','').strip();amount=float(request.form.get('amount','0') or 0);provider=request.form.get('provider','').strip()
+        if not target or amount<=0 or not mobile_balance_ok(c,amount):msg='<div class="msg err">❌ Odeeffannoo ykn balance sirrii miti.</div>'
+        else:
+            conn=get_db_connection();cur=conn.cursor()
+            try:
+                ref=mobile_new_ref('EX');now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S');cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,commission,bank_name,ft_reference,status,created_by,timestamp) VALUES (?,?,?,?,?,?,?,?,?,'PENDING_PROVIDER',?,?)",(ref,kind,c['customer_id'],c['full_name'],target,amount,0,provider or kind,ref,'MOBILE',now));conn.commit();msg=f'<div class="msg">✅ Gaaffiin galmaa’e. Ref: <b>{ref}</b>.</div>'
+            except Exception as e:conn.rollback();msg='<div class="msg err">❌ Gaaffii galmeessuu hin dandeenye.</div>';print(e)
+            finally:conn.close()
+    body=msg+f'''<div class="card"><h3>{title}</h3><form method="POST"><label>{label}</label><input name="target" required><label>Provider/Bank</label><input name="provider"><label>Amount</label><input name="amount" type="number" step="0.01" min="1" required><button class="btn">Ergi</button></form></div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page(title,body)
+
+@app.route('/m/etopup',methods=['GET','POST'])
+def mobile_etopup():
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    msg=''
+    if request.method=='POST':
+        phone=request.form.get('phone','').strip();amount=float(request.form.get('amount','0') or 0);provider=request.form.get('provider','').strip()
+        if not phone or amount<=0 or not mobile_balance_ok(c,amount):msg='<div class="msg err">❌ Phone, amount ykn balance sirrii miti.</div>'
+        else:
+            conn=get_db_connection();cur=conn.cursor()
+            try:
+                ref=mobile_new_ref('TOP');now=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S');cur.execute("INSERT INTO transactions (txn_id,txn_type,customer_id,customer_name,target_account,amount,commission,bank_name,ft_reference,status,created_by,timestamp) VALUES (?,?,?,?,?,?,?,?,?,'PENDING_PROVIDER',?,?)",(ref,'ETOPUP',c['customer_id'],c['full_name'],phone,amount,0,provider or 'ETOPUP',ref,'MOBILE',now));conn.commit();msg=f'<div class="msg">✅ E-topup gaaffiin galmaa’e. Ref: <b>{ref}</b>.</div>'
+            except Exception as e:conn.rollback();msg='<div class="msg err">❌ E-topup galmeessuu hin dandeenye.</div>';print(e)
+            finally:conn.close()
+    body=msg+'''<div class="card"><h3>📱 E-Topup</h3><form method="POST"><label>Phone</label><input name="phone" required><label>Telecom/Provider</label><input name="provider"><label>Amount</label><input name="amount" type="number" step="0.01" min="1" required><button class="btn">Topup Gaafadhu</button></form></div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page('E-Topup',body)
+
+@app.route('/m/statement')
+def mobile_statement():
+    c=mobile_customer()
+    if not c:return redirect('/m/login')
+    conn=get_db_connection();cur=conn.cursor();cur.execute("SELECT txn_type,target_account,amount,status,ft_reference,timestamp FROM transactions WHERE customer_id=? ORDER BY timestamp DESC LIMIT 100",(c['customer_id'],));rows=cur.fetchall();conn.close();rows_html=''.join([f'<div class="row"><div><b>{r["txn_type"]}</b><br><span class="muted">{r["timestamp"]} | {r["ft_reference"]}</span></div><div><b>{float(r["amount"] or 0):,.2f}</b><br><span class="muted">{r["status"]}</span></div></div>' for r in rows]);body=f'''<div class="card"><h3>📄 Statement</h3><div class="row"><b>Balance</b><b>{float(c['balance'] or 0):,.2f} Birr</b></div>{rows_html or '<p class="muted">Statement hin jiru.</p>'}</div><a class="btn alt" href="/m">← Dashboard</a>''';return mobile_page('Statement',body)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
