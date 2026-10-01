@@ -1695,7 +1695,7 @@ def transaction():
             if(d.success) {{
                 document.getElementById('v_name').innerText = d.full_name;
                 document.getElementById('v_phone').innerText = d.phone;
-                document.getElementById('v_balance').innerText = Number(d.balance || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                document.getElementById('v_balance').innerText = Number(d.balance || 0).toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
                 document.getElementById('v_photo').src = '/uploads/' + d.photo_path;
                 document.getElementById('v_signature').src = '/uploads/' + d.signature_path;
                 document.getElementById('v_status').innerHTML = d.freeze_status === 'FROZEN' ? '<b style="color:red;">FROZEN</b>' : '<b style="color:green;">ACTIVE</b>';
