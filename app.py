@@ -218,7 +218,8 @@ def init_db():
             status TEXT DEFAULT 'PENDING_MANAGER',
             created_by TEXT,
             timestamp TEXT,
-            audited_status TEXT DEFAULT 'OPEN'
+            audited_status TEXT DEFAULT 'OPEN',
+            reason TEXT DEFAULT ''
         )
     """)
 
@@ -255,6 +256,8 @@ def init_db():
         )
     """)
 
+    # Add optional transaction reason to existing Neon/PostgreSQL databases.
+    cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''")
     conn.commit()
     conn.close()
 
@@ -1167,6 +1170,7 @@ def print_receipt(txn_id):
         <div class="row"><span>Maqaa Nama Fudhatuu (Receiver):</span><b>{receiver_info}</b></div>
         <div class="row"><span>Bilbila Sender:</span><b>{phone}</b></div>
         <div class="row"><span>Hamma Qarshii:</span><b style="font-size:15px; color:#065f46;">{txn['amount']:,.2f} Birr</b></div>
+        <div class="row"><span>Sababa / Ibsa:</span><b>{txn['reason'] or '-'}</b></div>
         <div class="row"><span>Status:</span><b>{txn['status']}</b></div>
         <div class="row"><span>Hojjataa (Maker):</span><b>{txn['created_by']}</b></div>
 
@@ -1198,8 +1202,8 @@ def statement(cust_id):
         conn.close()
         return "Maammilli Hin Argamne", 404
 
-    # Apply 10 statement printing commission deduction if requested or viewed
-    statement_comm = c['balance'] * 0.00001
+    # Statement printing is FREE: no commission is charged or deducted.
+    statement_comm = 0.0
 
     query = """
         SELECT txn_id, txn_type, amount, commission, ft_reference, status, created_by, timestamp, customer_id, target_account
@@ -1253,7 +1257,7 @@ def statement(cust_id):
     <div class="box">
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <div>
-                <h2 style="font-size: 16px; color:#065f46; margin-bottom:4px;">📜 Account Statement (1% Statement Comm: {statement_comm:,.2f} Birr)</h2>
+                <h2 style="font-size: 16px; color:#065f46; margin-bottom:4px;">📜 Account Statement (FREE - Statement Print Commission: 0.00 Birr)</h2>
                 <p style="font-size: 12px; font-weight:bold;">{c['full_name']} (Acc: {c['customer_id']})</p>
                 <p style="font-size: 11px; color:#64748b;">Saala: <b>{c['gender']}</b> | Scheme: <b>{c['account_type']}</b></p>
                 <p style="font-size: 11px; color:#64748b;">Haftee Amajji/Ammaa: <b style="color:#065f46;">{c['balance']:,.2f} Birr</b></p>
@@ -1550,6 +1554,7 @@ def transaction():
         amount = float(request.form.get('amount', 0.0))
         confirm_amount = float(request.form.get('confirm_amount', 0.0))
         bank_name = request.form.get('bank_name', 'Imana Microfinance Core')
+        reason = request.form.get('reason', '').strip()
 
         cursor.execute("SELECT full_name, balance, freeze_status FROM customers WHERE customer_id = ?", (cust_id,))
         cust = cursor.fetchone()
@@ -1594,9 +1599,9 @@ def transaction():
                 created_txn_id = txn_id
 
                 cursor.execute("""
-                    INSERT INTO transactions (txn_id, txn_type, customer_id, customer_name, target_account, amount, commission, bank_name, ft_reference, status, created_by, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_MANAGER', ?, ?)
-                """, (txn_id, txn_type, cust_id, cust['full_name'], target_acc, amount, commission, bank_name, ft_ref, session['username'], now))
+                    INSERT INTO transactions (txn_id, txn_type, customer_id, customer_name, target_account, amount, commission, bank_name, ft_reference, status, created_by, timestamp, reason)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_MANAGER', ?, ?, ?)
+                """, (txn_id, txn_type, cust_id, cust['full_name'], target_acc, amount, commission, bank_name, ft_ref, session['username'], now, reason))
 
                 conn.commit()
                 msg = f"✅ Transaction galmaa'eera (Ref: {ft_ref}). Nagahee gadi buusuu dandeessu!"
@@ -1638,6 +1643,7 @@ def transaction():
                     <div style="font-size:11px;">
                         <p><b>Maqaa:</b> <span id="v_name"></span></p>
                         <p><b>Bilbila:</b> <span id="v_phone"></span></p>
+                        <p><b>Balance:</b> <span id="v_balance"></span> Birr</p>
                         <p><b>Status:</b> <span id="v_status"></span></p>
                     </div>
                 </div>
@@ -1657,6 +1663,12 @@ def transaction():
                 <label>Hamma Mirkaneessi (Confirm Amount)</label>
                 <input type="number" step="0.01" name="confirm_amount" required class="input-field">
             </div>
+
+            <div class="form-group">
+                <label>Sababa / Ibsa Transaction (Optional)</label>
+                <textarea name="reason" rows="2" placeholder="Fkn: Maallaqa mana keessaa, qusannoo, kaffaltii..." class="input-field"></textarea>
+            </div>
+
             <button type="submit" class="btn-submit">⚡ Transaction Raawwadhu & Nagahee Maxxansi</button>
         </form>
     </div>
@@ -1683,6 +1695,7 @@ def transaction():
             if(d.success) {{
                 document.getElementById('v_name').innerText = d.full_name;
                 document.getElementById('v_phone').innerText = d.phone;
+                document.getElementById('v_balance').innerText = Number(d.balance || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
                 document.getElementById('v_photo').src = '/uploads/' + d.photo_path;
                 document.getElementById('v_signature').src = '/uploads/' + d.signature_path;
                 document.getElementById('v_status').innerHTML = d.freeze_status === 'FROZEN' ? '<b style="color:red;">FROZEN</b>' : '<b style="color:green;">ACTIVE</b>';
@@ -1701,7 +1714,7 @@ def maker_receipts():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT txn_id, ft_reference, txn_type, customer_name, amount, status, timestamp FROM transactions WHERE created_by = ? ORDER BY timestamp DESC", (session['username'],))
+    cursor.execute("SELECT txn_id, ft_reference, txn_type, customer_name, amount, status, timestamp, reason FROM transactions WHERE created_by = ? ORDER BY timestamp DESC", (session['username'],))
     txns = cursor.fetchall()
     conn.close()
 
@@ -1715,6 +1728,7 @@ def maker_receipts():
             </div>
             <div style="font-size:13px; font-weight:bold; margin-top:4px;">{t['txn_type']}: {t['amount']:,.2f} Birr</div>
             <div style="font-size:11px; color:#64748b; margin-top:2px;">Maammila: {t['customer_name']} | {t['timestamp']}</div>
+            <div style="font-size:11px; color:#475569; margin-top:2px;"><b>Sababa:</b> {t['reason'] or '-'}</div>
             <div style="text-align:right; margin-top:8px;">
                 <a href="/receipt/{t['txn_id']}" target="_blank" class="btn-action btn-purple">🖨️ Nagahee Maxxansi</a>
             </div>
