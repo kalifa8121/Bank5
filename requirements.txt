@@ -4,6 +4,7 @@ Flask-SocketIO
 gevent
 gevent-websocket
 psycopg2-binary
+psycopg[binary]
 werkzeug
 gunicorn
 packaging
