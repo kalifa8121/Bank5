@@ -16,6 +16,11 @@ const roomName = document.getElementById("roomName");
 
 roomName.textContent = room;
 
+
+/* ================================
+   WEBRTC CONFIGURATION
+================================ */
+
 const rtcConfig = {
   iceServers: [
     {
@@ -28,9 +33,9 @@ const rtcConfig = {
 };
 
 
-/* =========================
-   PEER CONNECTION
-========================= */
+/* ================================
+   CREATE PEER CONNECTION
+================================ */
 
 function createPeerConnection() {
 
@@ -44,7 +49,10 @@ function createPeerConnection() {
 
     console.log("REMOTE TRACK RECEIVED");
 
-    if (event.streams && event.streams[0]) {
+    if (
+      event.streams &&
+      event.streams[0]
+    ) {
 
       remoteVideo.srcObject =
         event.streams[0];
@@ -53,6 +61,8 @@ function createPeerConnection() {
     }
   };
 
+
+  /* ICE candidate */
 
   pc.onicecandidate = async event => {
 
@@ -66,6 +76,8 @@ function createPeerConnection() {
   };
 
 
+  /* Connection state */
+
   pc.onconnectionstatechange = () => {
 
     console.log(
@@ -73,7 +85,9 @@ function createPeerConnection() {
       pc.connectionState
     );
 
-    if (pc.connectionState === "connected") {
+    if (
+      pc.connectionState === "connected"
+    ) {
 
       callStatus.textContent =
         "✅ Call walitti hidhame.";
@@ -91,9 +105,18 @@ function createPeerConnection() {
 
       callStatus.textContent =
         "⚠️ Connection addaan cite.";
+
+    } else if (
+      pc.connectionState === "connecting"
+    ) {
+
+      callStatus.textContent =
+        "🔄 Call walitti hidhamuu jira...";
     }
   };
 
+
+  /* ICE state */
 
   pc.oniceconnectionstatechange = () => {
 
@@ -108,9 +131,9 @@ function createPeerConnection() {
 }
 
 
-/* =========================
+/* ================================
    START CALL
-========================= */
+================================ */
 
 async function startCall(mode) {
 
@@ -125,6 +148,8 @@ async function startCall(mode) {
     callStatus.textContent =
       "🎤 Camera/microphone permission barbaadaa jira...";
 
+
+    /* Camera / microphone */
 
     const constraints =
       mode === "audio"
@@ -160,8 +185,12 @@ async function startCall(mode) {
     }
 
 
+    /* Peer connection */
+
     createPeerConnection();
 
+
+    /* Add local tracks */
 
     localStream
       .getTracks()
@@ -171,9 +200,10 @@ async function startCall(mode) {
           track,
           localStream
         );
-
       });
 
+
+    /* Create OFFER */
 
     const offer =
       await pc.createOffer();
@@ -185,45 +215,56 @@ async function startCall(mode) {
 
 
     /*
-      Offer keessatti mode daballa.
-      Calleen video moo audio akka ta'e
-      nama lammaffaaf beeksisa.
+      OFFER keessatti
+      type fi sdp qofa ergi.
     */
 
     await sendSignal(
       "offer",
       {
-        description: offer,
+        type: offer.type,
+        sdp: offer.sdp,
         mode: mode
       }
     );
 
 
-    callStatus.textContent =
-      mode === "video"
-        ? "📹 Video Call eegamaa jira..."
-        : "🎤 Voice Call eegamaa jira...";
+    if (mode === "video") {
+
+      callStatus.textContent =
+        "📹 Video Call eegamaa jira...";
+
+    } else {
+
+      callStatus.textContent =
+        "🎤 Voice Call eegamaa jira.";
+    }
 
 
     startPolling();
 
   } catch (error) {
 
-    console.error(error);
+    console.error(
+      "Start call error:",
+      error
+    );
 
     callStatus.textContent =
       "❌ Camera/microphone banamuu dide: " +
       error.message;
-
   }
 }
 
 
-/* =========================
-   SIGNAL SEND
-========================= */
+/* ================================
+   SEND SIGNAL TO SERVER
+================================ */
 
-async function sendSignal(kind, payload) {
+async function sendSignal(
+  kind,
+  payload
+) {
 
   try {
 
@@ -253,7 +294,12 @@ async function sendSignal(kind, payload) {
         "Signal failed:",
         response.status
       );
+
+      return false;
     }
+
+
+    return true;
 
   } catch (error) {
 
@@ -261,13 +307,15 @@ async function sendSignal(kind, payload) {
       "Signal error:",
       error
     );
+
+    return false;
   }
 }
 
 
-/* =========================
-   POLLING START
-========================= */
+/* ================================
+   START POLLING
+================================ */
 
 function startPolling() {
 
@@ -285,9 +333,9 @@ function startPolling() {
 }
 
 
-/* =========================
-   RECEIVE SIGNAL
-========================= */
+/* ================================
+   POLL SIGNALS
+================================ */
 
 async function pollSignals() {
 
@@ -308,10 +356,13 @@ async function pollSignals() {
       await response.json();
 
 
-    for (const signal of signals) {
+    for (
+      const signal
+      of signals
+    ) {
 
       /*
-        Signal ID ol ka'u.
+        Signal ID yaada'i.
       */
 
       lastSignalId =
@@ -322,9 +373,7 @@ async function pollSignals() {
 
 
       /*
-        Yoo backend sender_id
-        erge, signal ofii keenyaa
-        tuffadhu.
+        Signal nama ofii hin hojjetin.
       */
 
       if (
@@ -338,6 +387,12 @@ async function pollSignals() {
 
 
       let payload;
+
+
+      /*
+        DB irraa payload
+        JSON string ta'ee dhufuu danda'a.
+      */
 
       try {
 
@@ -357,9 +412,7 @@ async function pollSignals() {
       }
 
 
-      /* =====================
-         OFFER
-      ===================== */
+      /* OFFER */
 
       if (
         signal.kind === "offer"
@@ -369,14 +422,10 @@ async function pollSignals() {
           payload
         );
 
-      }
 
+      /* ANSWER */
 
-      /* =====================
-         ANSWER
-      ===================== */
-
-      else if (
+      } else if (
         signal.kind === "answer"
       ) {
 
@@ -384,23 +433,17 @@ async function pollSignals() {
           payload
         );
 
-      }
 
+      /* ICE CANDIDATE */
 
-      /* =====================
-         ICE
-      ===================== */
-
-      else if (
+      } else if (
         signal.kind === "candidate"
       ) {
 
         await receiveCandidate(
           payload
         );
-
       }
-
     }
 
   } catch (error) {
@@ -413,117 +456,163 @@ async function pollSignals() {
 }
 
 
-/* =========================
+/* ================================
    RECEIVE OFFER
-========================= */
+================================ */
 
-async function receiveOffer(payload) {
+async function receiveOffer(
+  payload
+) {
 
   try {
 
     /*
-      Offer haaraa yoo ta'e,
-      peer connection uumi.
+      Yoo peer connection jiraate,
+      offer haaraa hin fudhannu.
     */
 
-    if (!pc) {
-
-      const mode =
-        payload.mode || "video";
-
-      callMode = mode;
-
-
-      const constraints =
-        mode === "audio"
-          ? {
-              audio: true,
-              video: false
-            }
-          : {
-              audio: true,
-              video: true
-            };
-
-
-      callStatus.textContent =
-        "📞 Call dhufe. Camera/microphone eeyyama gaafachaa jira...";
-
-
-      localStream =
-        await navigator.mediaDevices.getUserMedia(
-          constraints
-        );
-
-
-      localVideo.srcObject =
-        localStream;
-
-
-      if (mode === "audio") {
-
-        localVideo.style.display =
-          "none";
-
-      } else {
-
-        localVideo.style.display =
-          "block";
-      }
-
-
-      createPeerConnection();
-
-
-      localStream
-        .getTracks()
-        .forEach(track => {
-
-          pc.addTrack(
-            track,
-            localStream
-          );
-
-        });
-
-
-      await pc.setRemoteDescription(
-        payload.description
-      );
-
-
-      /*
-        ICE candidate dursee dhufe
-        yoo jiraate asitti galchi.
-      */
-
-      await flushPendingCandidates();
-
-
-      const answer =
-        await pc.createAnswer();
-
-
-      await pc.setLocalDescription(
-        answer
-      );
-
-
-      await sendSignal(
-        "answer",
-        answer
-      );
-
-
-      callStatus.textContent =
-        mode === "video"
-          ? "📹 Video Call walitti hidhamaa jira..."
-          : "🎤 Voice Call walitti hidhamaa jira.";
-
-
-      startPolling();
-
+    if (pc) {
+      return;
     }
+
+
+    const mode =
+      payload.mode || "video";
+
+    callMode = mode;
+
+
+    const constraints =
+      mode === "audio"
+        ? {
+            audio: true,
+            video: false
+          }
+        : {
+            audio: true,
+            video: true
+          };
+
+
+    callStatus.textContent =
+      "📞 Call dhufe. Camera/microphone eeyyama gaafachaa jira...";
+
+
+    /*
+      Caller irraa offer dhufe.
+      Amma camera/microphone bana.
+    */
+
+    localStream =
+      await navigator.mediaDevices.getUserMedia(
+        constraints
+      );
+
+
+    localVideo.srcObject =
+      localStream;
+
+
+    if (mode === "audio") {
+
+      localVideo.style.display =
+        "none";
+
+    } else {
+
+      localVideo.style.display =
+        "block";
+    }
+
+
+    createPeerConnection();
+
+
+    /*
+      Local tracks dabali.
+    */
+
+    localStream
+      .getTracks()
+      .forEach(track => {
+
+        pc.addTrack(
+          track,
+          localStream
+        );
+      });
+
+
+    /*
+      IMPORTANT:
+      SDP keessatti type + sdp qofa
+      gara setRemoteDescription dabarsi.
+    */
+
+    const remoteDescription = {
+      type: payload.type,
+      sdp: payload.sdp
+    };
+
+
+    console.log(
+      "REMOTE OFFER:",
+      remoteDescription
+    );
+
+
+    await pc.setRemoteDescription(
+      remoteDescription
+    );
+
+
+    /*
+      ICE candidates dursee dhufan
+      yoo jiraatan asitti dabali.
+    */
+
+    await flushPendingCandidates();
+
+
+    /*
+      ANSWER uumi.
+    */
+
+    const answer =
+      await pc.createAnswer();
+
+
+    await pc.setLocalDescription(
+      answer
+    );
+
+
+    /*
+      ANSWER sirriitti ergi.
+    */
+
+    await sendSignal(
+      "answer",
+      {
+        type: answer.type,
+        sdp: answer.sdp
+      }
+    );
+
+
+    if (mode === "video") {
+
+      callStatus.textContent =
+        "📹 Video Call walitti hidhamaa jira...";
+
+    } else {
+
+      callStatus.textContent =
+        "🎤 Voice Call walitti hidhamaa jira.";
+    }
+
+
+    startPolling();
 
   } catch (error) {
 
@@ -539,26 +628,58 @@ async function receiveOffer(payload) {
 }
 
 
-/* =========================
+/* ================================
    RECEIVE ANSWER
-========================= */
+================================ */
 
-async function receiveAnswer(answer) {
+async function receiveAnswer(
+  answer
+) {
 
   try {
 
+    if (!pc) {
+      return;
+    }
+
+
+    /*
+      Answer duraan fudhatameera yoo ta'e
+      irra deebi'anii hin kaa'an.
+    */
+
     if (
-      !pc ||
       pc.currentRemoteDescription
     ) {
       return;
     }
 
 
-    await pc.setRemoteDescription(
-      answer
+    /*
+      Answer keessaa
+      type + sdp qofa fayyadami.
+    */
+
+    const remoteDescription = {
+      type: answer.type,
+      sdp: answer.sdp
+    };
+
+
+    console.log(
+      "REMOTE ANSWER:",
+      remoteDescription
     );
 
+
+    await pc.setRemoteDescription(
+      remoteDescription
+    );
+
+
+    /*
+      Pending ICE candidates.
+    */
 
     await flushPendingCandidates();
 
@@ -576,13 +697,20 @@ async function receiveAnswer(answer) {
 }
 
 
-/* =========================
+/* ================================
    RECEIVE ICE CANDIDATE
-========================= */
+================================ */
 
-async function receiveCandidate(candidate) {
+async function receiveCandidate(
+  candidate
+) {
 
   try {
+
+    /*
+      Remote description hin jirre yoo ta'e,
+      candidate yeroo booda fayyadamuuf kuusi.
+    */
 
     if (
       !pc ||
@@ -611,9 +739,9 @@ async function receiveCandidate(candidate) {
 }
 
 
-/* =========================
-   PENDING ICE
-========================= */
+/* ================================
+   FLUSH PENDING ICE
+================================ */
 
 async function flushPendingCandidates() {
 
@@ -621,6 +749,7 @@ async function flushPendingCandidates() {
     !pc ||
     !pc.remoteDescription
   ) {
+
     return;
   }
 
@@ -650,24 +779,20 @@ async function flushPendingCandidates() {
 }
 
 
-/* =========================
-   PAGE LOAD
-========================= */
-
-/*
-  Namni lammaffaan button
-  cuqaasuu osoo hin barbaadin
-  offer eeguu qaba.
-*/
+/* ================================
+   START LISTENING WHEN PAGE OPENS
+================================ */
 
 startPolling();
 
 
-/* =========================
+/* ================================
    END CALL
-========================= */
+================================ */
 
 function endCall() {
+
+  /* Stop polling */
 
   if (polling) {
 
@@ -679,6 +804,8 @@ function endCall() {
   }
 
 
+  /* Close peer connection */
+
   if (pc) {
 
     pc.ontrack = null;
@@ -689,6 +816,8 @@ function endCall() {
     pc = null;
   }
 
+
+  /* Stop camera/microphone */
 
   if (localStream) {
 
@@ -702,20 +831,30 @@ function endCall() {
   }
 
 
+  /* Clear videos */
+
   if (localVideo) {
-    localVideo.srcObject = null;
+
+    localVideo.srcObject =
+      null;
   }
 
 
   if (remoteVideo) {
-    remoteVideo.srcObject = null;
+
+    remoteVideo.srcObject =
+      null;
   }
 
+
+  /* Reset */
 
   pendingCandidates = [];
   lastSignalId = 0;
   callMode = null;
 
+
+  /* Back to chat */
 
   location.href =
     "/chat";
