@@ -6,3 +6,5 @@ gevent-websocket
 psycopg2-binary
 werkzeug
 gunicorn
+packaging
+eventlet
