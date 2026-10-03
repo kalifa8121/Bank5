@@ -1,11 +1,12 @@
-<div class="d-flex justify-content-center gap-3 mt-4" style="position: relative; z-index: 999999; pointer-events: auto;">
-  <button id="startAudioBtn" type="button" style="cursor: pointer; position: relative; z-index: 999999; pointer-events: auto;" class="btn btn-primary px-4 py-2 fw-bold">
+<!-- Buttons Container -->
+<div style="position: relative; z-index: 9999999; pointer-events: auto;" class="d-flex justify-content-center gap-3 mt-4">
+  <button type="button" onclick="startCall('audio')" style="position: relative; z-index: 9999999; pointer-events: auto; cursor: pointer;" class="btn btn-primary px-4 py-2 fw-bold">
     🎤 Voice Call
   </button>
-  <button id="startVideoBtn" type="button" style="cursor: pointer; position: relative; z-index: 999999; pointer-events: auto;" class="btn btn-success px-4 py-2 fw-bold">
+  <button type="button" onclick="startCall('video')" style="position: relative; z-index: 9999999; pointer-events: auto; cursor: pointer;" class="btn btn-success px-4 py-2 fw-bold">
     📹 Video Call
   </button>
-  <button id="endCallBtn" type="button" style="cursor: pointer; position: relative; z-index: 999999; pointer-events: auto;" class="btn btn-danger px-4 py-2 fw-bold">
+  <button type="button" onclick="endCall()" style="position: relative; z-index: 9999999; pointer-events: auto; cursor: pointer;" class="btn btn-danger px-4 py-2 fw-bold">
     ❌ Call Cufi
   </button>
 </div>
