@@ -3,17 +3,9 @@ let localStream = null;
 let pendingCandidates = [];
 let callMode = null;
 
-const room = window.CALL.room;
-const userId = window.CALL.userId;
-
-const localVideo = document.getElementById("localVideo");
-const remoteVideo = document.getElementById("remoteVideo");
-const callStatus = document.getElementById("callStatus");
-const roomName = document.getElementById("roomName");
-
-if (roomName) {
-  roomName.textContent = room;
-}
+// Global Window Variables
+const room = window.CALL ? window.CALL.room : 'general';
+const userId = window.CALL ? window.CALL.userId : null;
 
 /* ================================
    1. WEBSOCKET (SOCKET.IO) CONNECTION
@@ -29,9 +21,7 @@ socket.on("connect", () => {
 socket.on("signal", async (data) => {
   if (!data || Number(data.sender_id) === Number(userId)) return;
 
-  const kind = data.kind;
   let payload = data.payload;
-
   if (typeof payload === "string") {
     try {
       payload = JSON.parse(payload);
@@ -40,11 +30,11 @@ socket.on("signal", async (data) => {
     }
   }
 
-  if (kind === "offer") {
+  if (data.kind === "offer") {
     await receiveOffer(payload);
-  } else if (kind === "answer") {
+  } else if (data.kind === "answer") {
     await receiveAnswer(payload);
-  } else if (kind === "candidate") {
+  } else if (data.kind === "candidate") {
     await receiveCandidate(payload);
   }
 });
@@ -60,10 +50,6 @@ const rtcConfig = {
   ]
 };
 
-/* ================================
-   3. SEND SIGNAL VIA SOCKET.IO
-================================ */
-
 function sendSignal(kind, payload) {
   socket.emit("signal", {
     room: room,
@@ -73,18 +59,17 @@ function sendSignal(kind, payload) {
   });
 }
 
-/* ================================
-   4. PEER CONNECTION CREATION
-================================ */
-
 function createPeerConnection() {
   if (pc) return pc;
 
   pc = new RTCPeerConnection(rtcConfig);
 
+  const remoteVideo = document.getElementById("remoteVideo");
+  const callStatus = document.getElementById("callStatus");
+
   pc.ontrack = (event) => {
     console.log("REMOTE TRACK RECEIVED");
-    if (event.streams && event.streams[0]) {
+    if (remoteVideo && event.streams && event.streams[0]) {
       remoteVideo.srcObject = event.streams[0];
       remoteVideo.play().catch(err => console.warn("Auto-play blocked:", err));
     }
@@ -97,8 +82,7 @@ function createPeerConnection() {
   };
 
   pc.onconnectionstatechange = () => {
-    console.log("Connection state:", pc.connectionState);
-
+    if (!callStatus) return;
     if (pc.connectionState === "connected") {
       callStatus.textContent = "✅ Call walitti hidhame.";
     } else if (pc.connectionState === "failed") {
@@ -110,38 +94,32 @@ function createPeerConnection() {
     }
   };
 
-  pc.oniceconnectionstatechange = () => {
-    console.log("ICE state:", pc.iceConnectionState);
-    if (pc.iceConnectionState === "failed") {
-      pc.restartIce();
-    }
-  };
-
   return pc;
 }
 
 /* ================================
-   5. START CALL
+   3. START / END CALL
 ================================ */
 
 async function startCall(mode) {
+  const localVideo = document.getElementById("localVideo");
+  const callStatus = document.getElementById("callStatus");
+
   try {
     if (pc) return;
 
     callMode = mode;
-    callStatus.textContent = "🎤 Camera/microphone permission barbaadaa jira...";
+    if (callStatus) callStatus.textContent = "🎤 Camera/microphone permission barbaadaa jira...";
 
     const constraints = mode === "audio"
       ? { audio: true, video: false }
       : { audio: true, video: true };
 
     localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    localVideo.srcObject = localStream;
-
-    if (mode === "audio") {
-      localVideo.style.display = "none";
-    } else {
-      localVideo.style.display = "block";
+    
+    if (localVideo) {
+      localVideo.srcObject = localStream;
+      localVideo.style.display = (mode === "audio") ? "none" : "block";
     }
 
     createPeerConnection();
@@ -159,23 +137,20 @@ async function startCall(mode) {
       mode: mode
     });
 
-    if (mode === "video") {
-      callStatus.textContent = "📹 Video Call eegamaa jira...";
-    } else {
-      callStatus.textContent = "🎤 Voice Call eegamaa jira.";
+    if (callStatus) {
+      callStatus.textContent = mode === "video" ? "📹 Video Call eegamaa jira..." : "🎤 Voice Call eegamaa jira.";
     }
 
   } catch (error) {
     console.error("Start call error:", error);
-    callStatus.textContent = "❌ Camera/microphone banamuu dide: " + error.message;
+    if (callStatus) callStatus.textContent = "❌ Camera/microphone banamuu dide: " + error.message;
   }
 }
 
-/* ================================
-   6. RECEIVE OFFER / ANSWER / CANDIDATE
-================================ */
-
 async function receiveOffer(payload) {
+  const localVideo = document.getElementById("localVideo");
+  const callStatus = document.getElementById("callStatus");
+
   try {
     if (pc && pc.remoteDescription) return;
 
@@ -186,15 +161,12 @@ async function receiveOffer(payload) {
       ? { audio: true, video: false }
       : { audio: true, video: true };
 
-    callStatus.textContent = "📞 Call dhufe. Permission gaafachaa jira...";
+    if (callStatus) callStatus.textContent = "📞 Call dhufe. Permission gaafachaa jira...";
 
     localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    localVideo.srcObject = localStream;
-
-    if (mode === "audio") {
-      localVideo.style.display = "none";
-    } else {
-      localVideo.style.display = "block";
+    if (localVideo) {
+      localVideo.srcObject = localStream;
+      localVideo.style.display = (mode === "audio") ? "none" : "block";
     }
 
     createPeerConnection();
@@ -219,22 +191,20 @@ async function receiveOffer(payload) {
       sdp: answer.sdp
     });
 
-    if (mode === "video") {
-      callStatus.textContent = "📹 Video Call walitti hidhamaa jira...";
-    } else {
-      callStatus.textContent = "🎤 Voice Call walitti hidhamaa jira.";
+    if (callStatus) {
+      callStatus.textContent = mode === "video" ? "📹 Video Call walitti hidhamaa jira..." : "🎤 Voice Call walitti hidhamaa jira.";
     }
 
   } catch (error) {
     console.error("Offer error:", error);
-    callStatus.textContent = "❌ Offer fudhachuu dide: " + error.message;
+    if (callStatus) callStatus.textContent = "❌ Offer fudhachuu dide: " + error.message;
   }
 }
 
 async function receiveAnswer(answer) {
+  const callStatus = document.getElementById("callStatus");
   try {
-    if (!pc) return;
-    if (pc.currentRemoteDescription || pc.remoteDescription) return;
+    if (!pc || pc.remoteDescription) return;
 
     const remoteDescription = new RTCSessionDescription({
       type: answer.type,
@@ -244,7 +214,7 @@ async function receiveAnswer(answer) {
     await pc.setRemoteDescription(remoteDescription);
     await flushPendingCandidates();
 
-    callStatus.textContent = "🔗 Answer fudhatame. Call walitti hidhamuu jira.";
+    if (callStatus) callStatus.textContent = "🔗 Answer fudhatame. Call walitti hidhamuu jira.";
   } catch (error) {
     console.error("Answer error:", error);
   }
@@ -282,10 +252,6 @@ async function flushPendingCandidates() {
   }
 }
 
-/* ================================
-   7. END CALL & BUTTON EVENT LISTENERS
-================================ */
-
 function endCall() {
   if (pc) {
     pc.ontrack = null;
@@ -299,27 +265,54 @@ function endCall() {
     localStream = null;
   }
 
+  const localVideo = document.getElementById("localVideo");
+  const remoteVideo = document.getElementById("remoteVideo");
+
   if (localVideo) localVideo.srcObject = null;
   if (remoteVideo) remoteVideo.srcObject = null;
 
   pendingCandidates = [];
   callMode = null;
 
-  location.href = "/chat";
+  window.location.href = "/chat";
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+/* ================================
+   4. EVENT LISTENERS INITIALIZATION
+================================ */
+
+function initCallButtons() {
+  const roomName = document.getElementById("roomName");
+  if (roomName) roomName.textContent = room;
+
   const audioBtn = document.getElementById("startAudioBtn");
   const videoBtn = document.getElementById("startVideoBtn");
   const endBtn = document.getElementById("endCallBtn");
 
   if (audioBtn) {
-    audioBtn.addEventListener("click", () => startCall("audio"));
+    audioBtn.onclick = (e) => {
+      e.preventDefault();
+      startCall("audio");
+    };
   }
+
   if (videoBtn) {
-    videoBtn.addEventListener("click", () => startCall("video"));
+    videoBtn.onclick = (e) => {
+      e.preventDefault();
+      startCall("video");
+    };
   }
+
   if (endBtn) {
-    endBtn.addEventListener("click", () => endCall());
+    endBtn.onclick = (e) => {
+      e.preventDefault();
+      endCall();
+    };
   }
-});
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initCallButtons);
+} else {
+  initCallButtons();
+}
