@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<main class="call-page">
+
+    <h2>📞 Hojjattoota Connect — Call</h2>
+
+    <p>
+        Room:
+        <strong id="roomName"></strong>
+    </p>
+
+    <p id="callStatus" class="hint">
+        Call jalqabuuf button armaan gadii keessaa tokko cuqaasi.
+    </p>
+
+    <div class="video-grid">
+
+        <div>
+            <h3>Ati</h3>
+
+            <video
+                id="localVideo"
+                autoplay
+                muted
+                playsinline>
+            </video>
+        </div>
+
+        <div>
+            <h3>Namni biraa</h3>
+
+            <video
+                id="remoteVideo"
+                autoplay
+                playsinline>
+            </video>
+        </div>
+
+    </div>
+
+    <div class="call-buttons">
+
+        <button onclick="startCall('audio')">
+            🎤 Voice Call
+        </button>
+
+        <button onclick="startCall('video')">
+            📹 Video Call
+        </button>
+
+        <button onclick="endCall()">
+            ❌ Call Cufi
+        </button>
+
+    </div>
+
+</main>
+
+<script>
+
+window.CALL = {
+    room: {{ room|tojson }}
+};
+
+</script>
+
+<script src="{{ url_for('static', filename='call.js') }}"></script>
+
+{% endblock %}
