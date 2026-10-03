@@ -1,6 +1,6 @@
-static/style.css
-static/app.js
-static/chat.js
-static/call.js
-static/manifest.json
-static/sw.js
+style.css
+app.js
+chat.js
+call.js
+manifest.json
+sw.js
