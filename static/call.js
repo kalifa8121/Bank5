@@ -23,11 +23,9 @@ const socket = io();
 
 socket.on("connect", () => {
   console.log("WebSocket Connected ID:", socket.id);
-  // Gola (room) keessatti seenuuf ergi
   socket.emit("join", { room: room, userId: userId });
 });
 
-// Signal dhufu dhaggeeffadhu
 socket.on("signal", async (data) => {
   if (!data || Number(data.sender_id) === Number(userId)) return;
 
@@ -52,21 +50,13 @@ socket.on("signal", async (data) => {
 });
 
 /* ================================
-   2. WEBRTC CONFIGURATION (STUN + TURN)
+   2. WEBRTC CONFIGURATION
 ================================ */
 
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    // TURN server Metered ykn Xirsys irraa yoo qabaatte asitti dabali
-    /*
-    {
-      urls: "turn:global.turn.metered.ca:80",
-      username: "YOUR_USERNAME",
-      credential: "YOUR_PASSWORD"
-    }
-    */
+    { urls: "stun:stun1.l.google.com:19302" }
   ]
 };
 
@@ -100,14 +90,12 @@ function createPeerConnection() {
     }
   };
 
-  /* ICE candidate erguu */
   pc.onicecandidate = (event) => {
     if (event.candidate) {
       sendSignal("candidate", event.candidate.toJSON());
     }
   };
 
-  /* Connection state ilaaluu */
   pc.onconnectionstatechange = () => {
     console.log("Connection state:", pc.connectionState);
 
@@ -122,7 +110,6 @@ function createPeerConnection() {
     }
   };
 
-  /* ICE state & Auto-Reconnect */
   pc.oniceconnectionstatechange = () => {
     console.log("ICE state:", pc.iceConnectionState);
     if (pc.iceConnectionState === "failed") {
@@ -296,7 +283,7 @@ async function flushPendingCandidates() {
 }
 
 /* ================================
-   7. END CALL
+   7. END CALL & BUTTON EVENT LISTENERS
 ================================ */
 
 function endCall() {
@@ -320,3 +307,19 @@ function endCall() {
 
   location.href = "/chat";
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  const audioBtn = document.getElementById("startAudioBtn");
+  const videoBtn = document.getElementById("startVideoBtn");
+  const endBtn = document.getElementById("endCallBtn");
+
+  if (audioBtn) {
+    audioBtn.addEventListener("click", () => startCall("audio"));
+  }
+  if (videoBtn) {
+    videoBtn.addEventListener("click", () => startCall("video"));
+  }
+  if (endBtn) {
+    endBtn.addEventListener("click", () => endCall());
+  }
+});
