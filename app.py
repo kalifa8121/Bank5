@@ -1,15 +1,13 @@
 import os
 import uuid
-import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from functools import wraps
-from io import BytesIO
 
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, session
 from flask_sqlalchemy import SQLAlchemy
-from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from io import BytesIO
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "change-this-secret-key")
@@ -27,7 +25,6 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 30 MB per uploaded media item
 
 db = SQLAlchemy(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
 
 ALLOWED_MEDIA = {
     "image/jpeg", "image/png", "image/webp", "image/gif",
@@ -84,9 +81,6 @@ def login_required(view):
         return view(*args, **kwargs)
     return wrapped
 
-def json_string(value):
-    return json.dumps(value, ensure_ascii=False)
-
 @app.get("/")
 def index():
     if not current_user():
@@ -95,6 +89,8 @@ def index():
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    # Registration is intentionally open for a fresh internal test system.
+    # For production, close this route and create users through an admin panel.
     if request.method == "POST":
         username = request.form.get("username", "").strip().lower()
         display_name = request.form.get("display_name", "").strip()
@@ -259,7 +255,6 @@ def call():
     room = request.args.get("room", "general")[:120]
     return render_template("call.html", user=current_user(), room=room)
 
-# Legacy REST HTTP Polling endpoints (Retro-compatibility)
 @app.get("/api/signals")
 @login_required
 def get_signals():
@@ -303,29 +298,23 @@ def post_signal():
     db.session.commit()
     return jsonify({"ok": True, "id": signal.id})
 
+def json_string(value):
+    import json
+    return json.dumps(value, ensure_ascii=False)
+
 @app.post("/api/signals/cleanup")
 @login_required
 def cleanup_signals():
-    data = request.get_json(silent=True) or {}
-    room = str(data.get("room", "general"))[:120]
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
-    
+    room = request.get_json(silent=True).get("room", "general")
+    cutoff = datetime.now(timezone.utc)
+    # Keep cleanup conservative: remove only signals older than 1 hour.
+    from datetime import timedelta
+    old = cutoff - timedelta(hours=1)
     db.session.execute(
-        db.delete(Signal).where(Signal.room == room, Signal.created_at < cutoff)
+        db.delete(Signal).where(Signal.room == room, Signal.created_at < old)
     )
     db.session.commit()
     return jsonify({"ok": True})
-
-# Real-time WebSocket Signaling Handlers
-@socketio.on("join")
-def on_join(data):
-    room = data.get("room", "general")
-    join_room(room)
-
-@socketio.on("signal")
-def handle_signal(data):
-    room = data.get("room", "general")
-    emit("signal", data, room=room, include_self=False)
 
 @app.get("/health")
 def health():
@@ -339,5 +328,4 @@ with app.app_context():
     db.create_all()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
