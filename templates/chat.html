@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<main class="app-shell">
+
+  <aside class="sidebar">
+
+    <h2>Hojjattoota</h2>
+
+    <p>
+      <b>{{ user.display_name }}</b>
+      · {{ user.role }}
+    </p>
+
+    <label>Room</label>
+
+    <input
+      id="room"
+      value="general"
+      maxlength="120"
+    >
+
+    <button onclick="openCall()">
+      📹 Video / 🎤 Voice
+    </button>
+
+    <hr>
+
+    <h3>Namoota</h3>
+
+    <div id="users"></div>
+
+  </aside>
+
+
+  <section class="chat-panel">
+
+    <div
+      id="messages"
+      class="messages">
+    </div>
+
+
+    <div class="record-tools">
+
+      <button
+        id="audioRecordBtn"
+        onclick="toggleRecording('audio')">
+        🎙️ Audio Record
+      </button>
+
+      <button
+        id="videoRecordBtn"
+        onclick="toggleRecording('video')">
+        ⏺️ Video Record
+      </button>
+
+
+      <label class="upload-btn">
+
+        📷/📎
+
+        <input
+          id="fileInput"
+          type="file"
+          accept="image/*,audio/*,video/*,application/pdf"
+          hidden
+          onchange="sendFile()"
+        >
+
+      </label>
+
+    </div>
+
+
+    <form
+      id="messageForm"
+      class="composer"
+      onsubmit="sendText(event)"
+    >
+
+      <input
+        id="textInput"
+        placeholder="Ergaa barreessi..."
+        autocomplete="off"
+      >
+
+      <button type="submit">
+        Ergi
+      </button>
+
+    </form>
+
+
+    <p class="hint">
+      Camera/microphone yeroo jalqabaaf gaafatu irratti
+      <b>Allow</b> jedhu cuqaasi.
+    </p>
+
+  </section>
+
+</main>
+
+
+<script>
+
+window.APP = {
+  room: "general",
+  currentUserId: {{ user.id }}
+};
+
+</script>
+
+
+<script src="{{ url_for('static', filename='chat.js') }}"></script>
+
+{% endblock %}
