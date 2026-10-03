@@ -1,8 +1,5 @@
 let pc = null;
 let localStream = null;
-let lastSignalId = 0;
-let polling = null;
-
 let pendingCandidates = [];
 let callMode = null;
 
@@ -19,28 +16,83 @@ if (roomName) {
 }
 
 /* ================================
-   WEBRTC CONFIGURATION
+   1. WEBSOCKET (SOCKET.IO) CONNECTION
+================================ */
+
+const socket = io();
+
+socket.on("connect", () => {
+  console.log("WebSocket Connected ID:", socket.id);
+  // Gola (room) keessatti seenuuf ergi
+  socket.emit("join", { room: room, userId: userId });
+});
+
+// Signal dhufu dhaggeeffadhu
+socket.on("signal", async (data) => {
+  if (!data || Number(data.sender_id) === Number(userId)) return;
+
+  const kind = data.kind;
+  let payload = data.payload;
+
+  if (typeof payload === "string") {
+    try {
+      payload = JSON.parse(payload);
+    } catch (err) {
+      console.error("Payload JSON parse error:", err);
+    }
+  }
+
+  if (kind === "offer") {
+    await receiveOffer(payload);
+  } else if (kind === "answer") {
+    await receiveAnswer(payload);
+  } else if (kind === "candidate") {
+    await receiveCandidate(payload);
+  }
+});
+
+/* ================================
+   2. WEBRTC CONFIGURATION (STUN + TURN)
 ================================ */
 
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" }
+    { urls: "stun:stun1.l.google.com:19302" },
+    // TURN server Metered ykn Xirsys irraa yoo qabaatte asitti dabali
+    /*
+    {
+      urls: "turn:global.turn.metered.ca:80",
+      username: "YOUR_USERNAME",
+      credential: "YOUR_PASSWORD"
+    }
+    */
   ]
 };
 
 /* ================================
-   CREATE PEER CONNECTION
+   3. SEND SIGNAL VIA SOCKET.IO
+================================ */
+
+function sendSignal(kind, payload) {
+  socket.emit("signal", {
+    room: room,
+    sender_id: userId,
+    kind: kind,
+    payload: payload
+  });
+}
+
+/* ================================
+   4. PEER CONNECTION CREATION
 ================================ */
 
 function createPeerConnection() {
-  if (pc) {
-    return pc;
-  }
+  if (pc) return pc;
 
   pc = new RTCPeerConnection(rtcConfig);
 
-  pc.ontrack = event => {
+  pc.ontrack = (event) => {
     console.log("REMOTE TRACK RECEIVED");
     if (event.streams && event.streams[0]) {
       remoteVideo.srcObject = event.streams[0];
@@ -48,16 +100,16 @@ function createPeerConnection() {
     }
   };
 
-  /* ICE candidate */
-  pc.onicecandidate = async event => {
+  /* ICE candidate erguu */
+  pc.onicecandidate = (event) => {
     if (event.candidate) {
-      await sendSignal("candidate", event.candidate.toJSON());
+      sendSignal("candidate", event.candidate.toJSON());
     }
   };
 
-  /* Connection state */
+  /* Connection state ilaaluu */
   pc.onconnectionstatechange = () => {
-    console.log("Connection:", pc.connectionState);
+    console.log("Connection state:", pc.connectionState);
 
     if (pc.connectionState === "connected") {
       callStatus.textContent = "✅ Call walitti hidhame.";
@@ -70,9 +122,9 @@ function createPeerConnection() {
     }
   };
 
-  /* ICE state */
+  /* ICE state & Auto-Reconnect */
   pc.oniceconnectionstatechange = () => {
-    console.log("ICE:", pc.iceConnectionState);
+    console.log("ICE state:", pc.iceConnectionState);
     if (pc.iceConnectionState === "failed") {
       pc.restartIce();
     }
@@ -82,7 +134,7 @@ function createPeerConnection() {
 }
 
 /* ================================
-   START CALL
+   5. START CALL
 ================================ */
 
 async function startCall(mode) {
@@ -92,10 +144,9 @@ async function startCall(mode) {
     callMode = mode;
     callStatus.textContent = "🎤 Camera/microphone permission barbaadaa jira...";
 
-    const constraints =
-      mode === "audio"
-        ? { audio: true, video: false }
-        : { audio: true, video: true };
+    const constraints = mode === "audio"
+      ? { audio: true, video: false }
+      : { audio: true, video: true };
 
     localStream = await navigator.mediaDevices.getUserMedia(constraints);
     localVideo.srcObject = localStream;
@@ -115,7 +166,7 @@ async function startCall(mode) {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    await sendSignal("offer", {
+    sendSignal("offer", {
       type: offer.type,
       sdp: offer.sdp,
       mode: mode
@@ -127,7 +178,6 @@ async function startCall(mode) {
       callStatus.textContent = "🎤 Voice Call eegamaa jira.";
     }
 
-    startPolling();
   } catch (error) {
     console.error("Start call error:", error);
     callStatus.textContent = "❌ Camera/microphone banamuu dide: " + error.message;
@@ -135,90 +185,7 @@ async function startCall(mode) {
 }
 
 /* ================================
-   SEND SIGNAL TO SERVER
-================================ */
-
-async function sendSignal(kind, payload) {
-  try {
-    const response = await fetch("/api/signals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        room: room,
-        kind: kind,
-        payload: payload
-      })
-    });
-
-    if (!response.ok) {
-      console.error("Signal failed:", response.status);
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    console.error("Signal error:", error);
-    return false;
-  }
-}
-
-/* ================================
-   START POLLING
-================================ */
-
-function startPolling() {
-  if (polling) return;
-  polling = setInterval(pollSignals, 1000);
-  pollSignals();
-}
-
-/* ================================
-   POLL SIGNALS
-================================ */
-
-async function pollSignals() {
-  try {
-    const response = await fetch(
-      `/api/signals?room=${encodeURIComponent(room)}&after=${lastSignalId}`
-    );
-
-    if (!response.ok) return;
-
-    const signals = await response.json();
-
-    for (const signal of signals) {
-      lastSignalId = Math.max(lastSignalId, signal.id);
-
-      if (signal.sender_id && Number(signal.sender_id) === Number(userId)) {
-        continue;
-      }
-
-      let payload;
-      try {
-        payload =
-          typeof signal.payload === "string"
-            ? JSON.parse(signal.payload)
-            : signal.payload;
-      } catch (error) {
-        console.error("Payload parse error:", error);
-        continue;
-      }
-
-      if (signal.kind === "offer") {
-        await receiveOffer(payload);
-      } else if (signal.kind === "answer") {
-        await receiveAnswer(payload);
-      } else if (signal.kind === "candidate") {
-        await receiveCandidate(payload);
-      }
-    }
-  } catch (error) {
-    console.error("Polling error:", error);
-  }
-}
-
-/* ================================
-   RECEIVE OFFER
+   6. RECEIVE OFFER / ANSWER / CANDIDATE
 ================================ */
 
 async function receiveOffer(payload) {
@@ -228,12 +195,11 @@ async function receiveOffer(payload) {
     const mode = payload.mode || "video";
     callMode = mode;
 
-    const constraints =
-      mode === "audio"
-        ? { audio: true, video: false }
-        : { audio: true, video: true };
+    const constraints = mode === "audio"
+      ? { audio: true, video: false }
+      : { audio: true, video: true };
 
-    callStatus.textContent = "📞 Call dhufe. Camera/microphone eeyyama gaafachaa jira...";
+    callStatus.textContent = "📞 Call dhufe. Permission gaafachaa jira...";
 
     localStream = await navigator.mediaDevices.getUserMedia(constraints);
     localVideo.srcObject = localStream;
@@ -255,15 +221,13 @@ async function receiveOffer(payload) {
       sdp: payload.sdp
     });
 
-    console.log("REMOTE OFFER:", remoteDescription);
-
     await pc.setRemoteDescription(remoteDescription);
     await flushPendingCandidates();
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    await sendSignal("answer", {
+    sendSignal("answer", {
       type: answer.type,
       sdp: answer.sdp
     });
@@ -274,16 +238,11 @@ async function receiveOffer(payload) {
       callStatus.textContent = "🎤 Voice Call walitti hidhamaa jira.";
     }
 
-    startPolling();
   } catch (error) {
     console.error("Offer error:", error);
     callStatus.textContent = "❌ Offer fudhachuu dide: " + error.message;
   }
 }
-
-/* ================================
-   RECEIVE ANSWER
-================================ */
 
 async function receiveAnswer(answer) {
   try {
@@ -295,8 +254,6 @@ async function receiveAnswer(answer) {
       sdp: answer.sdp
     });
 
-    console.log("REMOTE ANSWER:", remoteDescription);
-
     await pc.setRemoteDescription(remoteDescription);
     await flushPendingCandidates();
 
@@ -306,15 +263,10 @@ async function receiveAnswer(answer) {
   }
 }
 
-/* ================================
-   RECEIVE ICE CANDIDATE
-================================ */
-
 async function receiveCandidate(candidateData) {
   try {
     if (!candidateData || !candidateData.candidate) return;
 
-    // Remote description osoma hin saajine yoo dhufe kuusi
     if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) {
       pendingCandidates.push(candidateData);
       return;
@@ -326,10 +278,6 @@ async function receiveCandidate(candidateData) {
     console.error("ICE candidate error:", error);
   }
 }
-
-/* ================================
-   FLUSH PENDING ICE
-================================ */
 
 async function flushPendingCandidates() {
   if (!pc || !pc.remoteDescription || !pc.remoteDescription.type) return;
@@ -348,21 +296,10 @@ async function flushPendingCandidates() {
 }
 
 /* ================================
-   START LISTENING WHEN PAGE OPENS
-================================ */
-
-startPolling();
-
-/* ================================
-   END CALL
+   7. END CALL
 ================================ */
 
 function endCall() {
-  if (polling) {
-    clearInterval(polling);
-    polling = null;
-  }
-
   if (pc) {
     pc.ontrack = null;
     pc.onicecandidate = null;
@@ -379,7 +316,6 @@ function endCall() {
   if (remoteVideo) remoteVideo.srcObject = null;
 
   pendingCandidates = [];
-  lastSignalId = 0;
   callMode = null;
 
   location.href = "/chat";
