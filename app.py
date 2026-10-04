@@ -254,8 +254,34 @@ def api_users():
 @login_required
 def call():
     room = request.args.get("room", "general")[:120]
-    return render_template("call.html", user=current_user(), room=room)
 
+    receiver_raw = request.args.get("receiver_id", "")
+    mode = request.args.get("mode", "")
+
+    try:
+        receiver_id = int(receiver_raw) if receiver_raw else None
+    except (TypeError, ValueError):
+        receiver_id = None
+
+    if receiver_id is not None:
+        receiver = db.session.get(User, receiver_id)
+
+        if not receiver:
+            return "Worker kun hin jiru.", 404
+
+        if receiver.id == current_user().id:
+            return "Ofii keetiif call gochuu hin dandeessu.", 400
+
+    if mode not in {"audio", "video"}:
+        mode = None
+
+    return render_template(
+        "call.html",
+        user=current_user(),
+        room=room,
+        receiver_id=receiver_id,
+        mode=mode
+    )
 @app.get("/api/signals")
 @login_required
 def get_signals():
