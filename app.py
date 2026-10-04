@@ -65,6 +65,7 @@ class Signal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     room = db.Column(db.String(120), nullable=False, index=True)
     sender_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    receiver_id = db.Column(db.Integer, nullable=True, index=True)
     kind = db.Column(db.String(30), nullable=False)  # offer, answer, candidate, leave
     payload = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
