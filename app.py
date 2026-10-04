@@ -261,27 +261,44 @@ def call():
 def get_signals():
     room = request.args.get("room", "general")[:120]
     after = request.args.get("after", "0")
+
     try:
         after_id = int(after)
     except ValueError:
         after_id = 0
 
+    current_id = current_user().id
+
     rows = db.session.scalars(
         db.select(Signal)
-        .where(Signal.room == room, Signal.id > after_id, Signal.sender_id != current_user().id)
+        .where(
+            Signal.room == room,
+            Signal.id > after_id,
+            Signal.sender_id != current_id,
+            db.or_(
+                Signal.receiver_id == current_id,
+                Signal.receiver_id.is_(None)
+            )
+        )
         .order_by(Signal.id.asc())
         .limit(100)
     ).all()
 
     return jsonify([
-        {"id": s.id, "kind": s.kind, "payload": s.payload, "sender_id": s.sender_id}
+        {
+            "id": s.id,
+            "kind": s.kind,
+            "payload": s.payload,
+            "sender_id": s.sender_id,
+            "receiver_id": s.receiver_id
+        }
         for s in rows
     ])
-
 @app.post("/api/signals")
 @login_required
 def post_signal():
     data = request.get_json(silent=True) or {}
+
     room = str(data.get("room", "general"))[:120]
     kind = str(data.get("kind", ""))[:30]
     payload = data.get("payload", "")
@@ -289,20 +306,39 @@ def post_signal():
     if kind not in {"offer", "answer", "candidate", "leave"}:
         return jsonify({"error": "Signal type hin sirre."}), 400
 
+    receiver_id = data.get("receiver_id")
+
+    if receiver_id in (None, "", "null"):
+        receiver_id = None
+    else:
+        try:
+            receiver_id = int(receiver_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Receiver ID hin sirre."}), 400
+
+        if receiver_id == current_user().id:
+            return jsonify({"error": "Ofii keetiif call erguu hin dandeessu."}), 400
+
+        receiver = db.session.get(User, receiver_id)
+
+        if not receiver:
+            return jsonify({"error": "Worker kun hin jiru."}), 404
+
     signal = Signal(
         room=room,
         sender_id=current_user().id,
+        receiver_id=receiver_id,
         kind=kind,
         payload=json_string(payload),
     )
+
     db.session.add(signal)
     db.session.commit()
-    return jsonify({"ok": True, "id": signal.id})
 
-def json_string(value):
-    import json
-    return json.dumps(value, ensure_ascii=False)
-
+    return jsonify({
+        "ok": True,
+        "id": signal.id
+    })
 @app.post("/api/signals/cleanup")
 @login_required
 def cleanup_signals():
