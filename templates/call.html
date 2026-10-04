@@ -57,14 +57,16 @@
     </div>
 
 </main>
-
 <script>
 
 window.CALL = {
-    room: {{ room|tojson }}
+    room: {{ room|tojson }},
+    userId: {{ user.id }},
+    receiverId: {{ request.args.get("receiver_id", "null")|tojson }}
 };
 
 </script>
+
 
 <script src="{{ url_for('static', filename='call.js') }}"></script>
 
