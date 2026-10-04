@@ -242,20 +242,27 @@ async function toggleRecording(kind) {
   }
 }
 
-function openCall() {
-  location.href =
-    `/call?room=${encodeURIComponent(roomName())}`;
+function openCall() { 
+  location.href = 
+    `/call?room=${encodeURIComponent(roomName())}`; 
 }
 
-function escapeHtml(s) {
-  return String(s).replace(
-    /[&<>"']/g,
-    c => ({
-      '&':'&amp;',
-      '<':'&lt;',
-      '>':'&gt;',
-      '"':'&quot;',
-      "'":'&#039;'
-    }[c])
-  );
+function openCallWithUser(receiverId, mode) {
+  location.href =
+    `/call?room=${encodeURIComponent(roomName())}` +
+    `&receiver_id=${encodeURIComponent(receiverId)}` +
+    `&mode=${encodeURIComponent(mode)}`;
+}
+
+function escapeHtml(s) { 
+  return String(s).replace( 
+    /[&<>"']/g, 
+    c => ({ 
+      '&':'&amp;', 
+      '<':'&lt;', 
+      '>':'&gt;', 
+      '"':'&quot;', 
+      "'":'&#039;' 
+    }[c]) 
+  ); 
 }
