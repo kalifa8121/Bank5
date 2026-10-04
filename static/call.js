@@ -6,8 +6,11 @@ let polling = null;
 let pendingCandidates = [];
 let callMode = null;
 
+/* CALL INFORMATION */
 const room = window.CALL.room;
 const userId = window.CALL.userId;
+const receiverId = window.CALL.receiverId || null;
+let peerUserId = receiverId;
 
 const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
@@ -17,31 +20,19 @@ const roomName = document.getElementById("roomName");
 roomName.textContent = room;
 
 
-/* ================================
-   WEBRTC CONFIGURATION
-================================ */
-
+/* WEBRTC CONFIGURATION */
 const rtcConfig = {
   iceServers: [
-    {
-      urls: "stun:stun.l.google.com:19302"
-    },
-    {
-      urls: "stun:stun1.l.google.com:19302"
-    }
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" }
   ]
 };
 
 
-/* ================================
-   CREATE PEER CONNECTION
-================================ */
-
+/* CREATE PEER CONNECTION */
 function createPeerConnection() {
 
-  if (pc) {
-    return pc;
-  }
+  if (pc) return pc;
 
   pc = new RTCPeerConnection(rtcConfig);
 
@@ -49,74 +40,54 @@ function createPeerConnection() {
 
     console.log("REMOTE TRACK RECEIVED");
 
-    if (
-      event.streams &&
-      event.streams[0]
-    ) {
+    if (event.streams && event.streams[0]) {
 
-      remoteVideo.srcObject =
-        event.streams[0];
+      remoteVideo.srcObject = event.streams[0];
 
       remoteVideo.play().catch(() => {});
     }
   };
 
 
-  /* ICE candidate */
-
   pc.onicecandidate = async event => {
 
-    if (event.candidate) {
+    if (event.candidate && peerUserId) {
 
       await sendSignal(
         "candidate",
-        event.candidate.toJSON()
+        event.candidate.toJSON(),
+        peerUserId
       );
     }
   };
 
 
-  /* Connection state */
-
   pc.onconnectionstatechange = () => {
 
-    console.log(
-      "Connection:",
-      pc.connectionState
-    );
+    console.log("Connection:", pc.connectionState);
 
-    if (
-      pc.connectionState === "connected"
-    ) {
+    if (pc.connectionState === "connected") {
 
       callStatus.textContent =
         "✅ Call walitti hidhame.";
 
-    } else if (
-      pc.connectionState === "failed"
-    ) {
+    } else if (pc.connectionState === "failed") {
 
       callStatus.textContent =
         "❌ Connection kufe. Network kee ilaali.";
 
-    } else if (
-      pc.connectionState === "disconnected"
-    ) {
+    } else if (pc.connectionState === "disconnected") {
 
       callStatus.textContent =
         "⚠️ Connection addaan cite.";
 
-    } else if (
-      pc.connectionState === "connecting"
-    ) {
+    } else if (pc.connectionState === "connecting") {
 
       callStatus.textContent =
         "🔄 Call walitti hidhamuu jira...";
     }
   };
 
-
-  /* ICE state */
 
   pc.oniceconnectionstatechange = () => {
 
@@ -131,15 +102,18 @@ function createPeerConnection() {
 }
 
 
-/* ================================
-   START CALL
-================================ */
-
+/* START CALL */
 async function startCall(mode) {
 
   try {
 
-    if (pc) {
+    if (pc) return;
+
+    if (!peerUserId) {
+
+      callStatus.textContent =
+        "❌ Nama call gootu hin filatamne.";
+
       return;
     }
 
@@ -149,18 +123,10 @@ async function startCall(mode) {
       "🎤 Camera/microphone permission barbaadaa jira...";
 
 
-    /* Camera / microphone */
-
     const constraints =
       mode === "audio"
-        ? {
-            audio: true,
-            video: false
-          }
-        : {
-            audio: true,
-            video: true
-          };
+        ? { audio: true, video: false }
+        : { audio: true, video: true };
 
 
     localStream =
@@ -169,28 +135,21 @@ async function startCall(mode) {
       );
 
 
-    localVideo.srcObject =
-      localStream;
+    localVideo.srcObject = localStream;
 
 
     if (mode === "audio") {
 
-      localVideo.style.display =
-        "none";
+      localVideo.style.display = "none";
 
     } else {
 
-      localVideo.style.display =
-        "block";
+      localVideo.style.display = "block";
     }
 
 
-    /* Peer connection */
-
     createPeerConnection();
 
-
-    /* Add local tracks */
 
     localStream
       .getTracks()
@@ -200,10 +159,9 @@ async function startCall(mode) {
           track,
           localStream
         );
+
       });
 
-
-    /* Create OFFER */
 
     const offer =
       await pc.createOffer();
@@ -214,10 +172,11 @@ async function startCall(mode) {
     );
 
 
-    /*
-      OFFER keessatti
-      type fi sdp qofa ergi.
-    */
+    console.log(
+      "LOCAL OFFER:",
+      offer
+    );
+
 
     await sendSignal(
       "offer",
@@ -225,7 +184,8 @@ async function startCall(mode) {
         type: offer.type,
         sdp: offer.sdp,
         mode: mode
-      }
+      },
+      peerUserId
     );
 
 
@@ -257,13 +217,11 @@ async function startCall(mode) {
 }
 
 
-/* ================================
-   SEND SIGNAL TO SERVER
-================================ */
-
+/* SEND SIGNAL TO SERVER */
 async function sendSignal(
   kind,
-  payload
+  payload,
+  targetUserId = peerUserId
 ) {
 
   try {
@@ -280,9 +238,15 @@ async function sendSignal(
           },
 
           body: JSON.stringify({
+
             room: room,
+
             kind: kind,
-            payload: payload
+
+            payload: payload,
+
+            receiver_id:
+              targetUserId
           })
         }
       );
@@ -290,9 +254,15 @@ async function sendSignal(
 
     if (!response.ok) {
 
+      const data =
+        await response
+          .json()
+          .catch(() => ({}));
+
       console.error(
         "Signal failed:",
-        response.status
+        response.status,
+        data
       );
 
       return false;
@@ -313,15 +283,10 @@ async function sendSignal(
 }
 
 
-/* ================================
-   START POLLING
-================================ */
-
+/* START POLLING */
 function startPolling() {
 
-  if (polling) {
-    return;
-  }
+  if (polling) return;
 
   polling =
     setInterval(
@@ -333,10 +298,7 @@ function startPolling() {
 }
 
 
-/* ================================
-   POLL SIGNALS
-================================ */
-
+/* POLL SIGNALS */
 async function pollSignals() {
 
   try {
@@ -347,23 +309,14 @@ async function pollSignals() {
       );
 
 
-    if (!response.ok) {
-      return;
-    }
+    if (!response.ok) return;
 
 
     const signals =
       await response.json();
 
 
-    for (
-      const signal
-      of signals
-    ) {
-
-      /*
-        Signal ID yaada'i.
-      */
+    for (const signal of signals) {
 
       lastSignalId =
         Math.max(
@@ -372,14 +325,10 @@ async function pollSignals() {
         );
 
 
-      /*
-        Signal nama ofii hin hojjetin.
-      */
-
       if (
         signal.sender_id &&
         Number(signal.sender_id) ===
-        Number(userId)
+          Number(userId)
       ) {
 
         continue;
@@ -388,11 +337,6 @@ async function pollSignals() {
 
       let payload;
 
-
-      /*
-        DB irraa payload
-        JSON string ta'ee dhufuu danda'a.
-      */
 
       try {
 
@@ -412,33 +356,20 @@ async function pollSignals() {
       }
 
 
-      /* OFFER */
-
-      if (
-        signal.kind === "offer"
-      ) {
+      if (signal.kind === "offer") {
 
         await receiveOffer(
-          payload
+          payload,
+          signal.sender_id
         );
 
-
-      /* ANSWER */
-
-      } else if (
-        signal.kind === "answer"
-      ) {
+      } else if (signal.kind === "answer") {
 
         await receiveAnswer(
           payload
         );
 
-
-      /* ICE CANDIDATE */
-
-      } else if (
-        signal.kind === "candidate"
-      ) {
+      } else if (signal.kind === "candidate") {
 
         await receiveCandidate(
           payload
@@ -456,52 +387,37 @@ async function pollSignals() {
 }
 
 
-/* ================================
-   RECEIVE OFFER
-================================ */
-
+/* RECEIVE OFFER */
 async function receiveOffer(
-  payload
+  payload,
+  senderId
 ) {
 
   try {
 
-    /*
-      Yoo peer connection jiraate,
-      offer haaraa hin fudhannu.
-    */
+    if (pc) return;
 
-    if (pc) {
-      return;
-    }
+
+    peerUserId =
+      Number(senderId);
 
 
     const mode =
       payload.mode || "video";
+
 
     callMode = mode;
 
 
     const constraints =
       mode === "audio"
-        ? {
-            audio: true,
-            video: false
-          }
-        : {
-            audio: true,
-            video: true
-          };
+        ? { audio: true, video: false }
+        : { audio: true, video: true };
 
 
     callStatus.textContent =
       "📞 Call dhufe. Camera/microphone eeyyama gaafachaa jira...";
 
-
-    /*
-      Caller irraa offer dhufe.
-      Amma camera/microphone bana.
-    */
 
     localStream =
       await navigator.mediaDevices.getUserMedia(
@@ -528,10 +444,6 @@ async function receiveOffer(
     createPeerConnection();
 
 
-    /*
-      Local tracks dabali.
-    */
-
     localStream
       .getTracks()
       .forEach(track => {
@@ -543,14 +455,10 @@ async function receiveOffer(
       });
 
 
-    /*
-      IMPORTANT:
-      SDP keessatti type + sdp qofa
-      gara setRemoteDescription dabarsi.
-    */
-
     const remoteDescription = {
+
       type: payload.type,
+
       sdp: payload.sdp
     };
 
@@ -566,17 +474,8 @@ async function receiveOffer(
     );
 
 
-    /*
-      ICE candidates dursee dhufan
-      yoo jiraatan asitti dabali.
-    */
-
     await flushPendingCandidates();
 
-
-    /*
-      ANSWER uumi.
-    */
 
     const answer =
       await pc.createAnswer();
@@ -587,16 +486,19 @@ async function receiveOffer(
     );
 
 
-    /*
-      ANSWER sirriitti ergi.
-    */
+    console.log(
+      "LOCAL ANSWER:",
+      answer
+    );
+
 
     await sendSignal(
       "answer",
       {
         type: answer.type,
         sdp: answer.sdp
-      }
+      },
+      peerUserId
     );
 
 
@@ -608,7 +510,7 @@ async function receiveOffer(
     } else {
 
       callStatus.textContent =
-        "🎤 Voice Call walitti hidhamaa jira.";
+        "🎤 Voice Call walitti hidhamaa jira...";
     }
 
 
@@ -628,40 +530,23 @@ async function receiveOffer(
 }
 
 
-/* ================================
-   RECEIVE ANSWER
-================================ */
-
+/* RECEIVE ANSWER */
 async function receiveAnswer(
   answer
 ) {
 
   try {
 
-    if (!pc) {
+    if (!pc) return;
+
+    if (pc.currentRemoteDescription)
       return;
-    }
 
-
-    /*
-      Answer duraan fudhatameera yoo ta'e
-      irra deebi'anii hin kaa'an.
-    */
-
-    if (
-      pc.currentRemoteDescription
-    ) {
-      return;
-    }
-
-
-    /*
-      Answer keessaa
-      type + sdp qofa fayyadami.
-    */
 
     const remoteDescription = {
+
       type: answer.type,
+
       sdp: answer.sdp
     };
 
@@ -676,10 +561,6 @@ async function receiveAnswer(
       remoteDescription
     );
 
-
-    /*
-      Pending ICE candidates.
-    */
 
     await flushPendingCandidates();
 
@@ -697,20 +578,12 @@ async function receiveAnswer(
 }
 
 
-/* ================================
-   RECEIVE ICE CANDIDATE
-================================ */
-
+/* RECEIVE ICE CANDIDATE */
 async function receiveCandidate(
   candidate
 ) {
 
   try {
-
-    /*
-      Remote description hin jirre yoo ta'e,
-      candidate yeroo booda fayyadamuuf kuusi.
-    */
 
     if (
       !pc ||
@@ -739,19 +612,13 @@ async function receiveCandidate(
 }
 
 
-/* ================================
-   FLUSH PENDING ICE
-================================ */
-
+/* FLUSH PENDING ICE */
 async function flushPendingCandidates() {
 
   if (
     !pc ||
     !pc.remoteDescription
-  ) {
-
-    return;
-  }
+  ) return;
 
 
   for (
@@ -779,20 +646,29 @@ async function flushPendingCandidates() {
 }
 
 
-/* ================================
-   START LISTENING WHEN PAGE OPENS
-================================ */
-
+/* START LISTENING WHEN PAGE OPENS */
 startPolling();
 
 
-/* ================================
-   END CALL
-================================ */
+/* AUTO START CALLER */
+const initialMode =
+  window.CALL.mode;
 
+
+if (
+  initialMode === "audio" ||
+  initialMode === "video"
+) {
+
+  setTimeout(
+    () => startCall(initialMode),
+    300
+  );
+}
+
+
+/* END CALL */
 function endCall() {
-
-  /* Stop polling */
 
   if (polling) {
 
@@ -804,11 +680,10 @@ function endCall() {
   }
 
 
-  /* Close peer connection */
-
   if (pc) {
 
     pc.ontrack = null;
+
     pc.onicecandidate = null;
 
     pc.close();
@@ -817,45 +692,36 @@ function endCall() {
   }
 
 
-  /* Stop camera/microphone */
-
   if (localStream) {
 
     localStream
       .getTracks()
       .forEach(track => {
+
         track.stop();
+
       });
 
     localStream = null;
   }
 
 
-  /* Clear videos */
-
-  if (localVideo) {
-
-    localVideo.srcObject =
-      null;
-  }
+  if (localVideo)
+    localVideo.srcObject = null;
 
 
-  if (remoteVideo) {
+  if (remoteVideo)
+    remoteVideo.srcObject = null;
 
-    remoteVideo.srcObject =
-      null;
-  }
-
-
-  /* Reset */
 
   pendingCandidates = [];
+
   lastSignalId = 0;
+
   callMode = null;
 
+  peerUserId = receiverId;
 
-  /* Back to chat */
 
-  location.href =
-    "/chat";
+  location.href = "/chat";
 }
