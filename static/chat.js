@@ -34,17 +34,37 @@ async function loadUsers() {
     const res = await fetch("/api/users");
     const users = await res.json();
 
-    document.getElementById("users").innerHTML = users.map(u =>
+    const others = users.filter(
+      u => Number(u.id) !== Number(window.APP.currentUserId)
+    );
+
+    document.getElementById("users").innerHTML = others.map(u =>
       `<div class="user-row">
-        <span>${escapeHtml(u.display_name)}</span>
-        <small>${escapeHtml(u.role)}</small>
+        <span>
+          ${escapeHtml(u.display_name)}
+          <small>${escapeHtml(u.role)}</small>
+        </span>
+
+        <div>
+          <button
+            type="button"
+            onclick="openCallWithUser(${u.id}, 'audio')">
+            🎤
+          </button>
+
+          <button
+            type="button"
+            onclick="openCallWithUser(${u.id}, 'video')">
+            📹
+          </button>
+        </div>
       </div>`
     ).join("");
-  } catch(e) {}
+
+  } catch(e) {
+    console.error("Users loading error:", e);
+  }
 }
-
-loadUsers();
-
 function renderMessage(m) {
   const box = document.getElementById("messages");
   const div = document.createElement("div");
