@@ -26,7 +26,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "imana_free_interest_microfinance_secret_key")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', os.path.join(BASE_DIR, 'uploads'))
 BACKUP_FOLDER = os.path.join(BASE_DIR, 'backups')
 DB_PATH = os.path.join(BASE_DIR, "web_banking.db")
 
