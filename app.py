@@ -183,7 +183,6 @@ def init_db():
         )
     """)
 
-    # Safe migrations (all idempotent)
     for stmt in [
         "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reason TEXT DEFAULT ''",
         "ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile_pin TEXT DEFAULT '1234'",
@@ -351,7 +350,6 @@ HTML_LAYOUT = """
         else { input.type = "password"; icon.textContent = "👁️"; }
     }
 
-    // 🔊 Sound alert for mobile money transfers (sender success + receiver incoming)
     function playAlertSound() {
         try {
             var AC = window.AudioContext || window.webkitAudioContext;
@@ -387,7 +385,6 @@ def uploaded_file(filename):
 
 @app.route('/api/get_customer/<cust_id>')
 def api_get_customer(cust_id):
-    # Allow both staff (role) and mobile customer (mobile_cust_id)
     if 'role' not in session and 'mobile_cust_id' not in session:
         return jsonify({'error': 'Unauthorized', 'success': False}), 401
 
@@ -628,7 +625,7 @@ def dashboard():
 
 
 # ================================================================
-# CUSTOMER REGISTRATION (Maker) — FIXED: balance=0.0, deposit pending
+# CUSTOMER REGISTRATION
 # ================================================================
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -666,7 +663,6 @@ def register():
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             mob_status = 'PENDING_APPROVAL' if enable_mobile else 'INACTIVE'
 
-            # ✅ FIX: balance=0.0 — deposit approval will credit it
             cursor.execute("""
                 INSERT INTO customers (customer_id, full_name, phone, gender, account_type,
                     photo_path, signature_path, national_id_path, balance, status,
@@ -718,7 +714,7 @@ def register():
 
 
 # ================================================================
-# MAKER TRANSACTION — with anti-fraud verification (photo, signature, ID)
+# MAKER TRANSACTION — FIXED LINE 869 (double braces in JS)
 # ================================================================
 @app.route('/transaction', methods=['GET', 'POST'])
 def transaction():
@@ -866,7 +862,7 @@ def transaction():
                 document.getElementById('v_signature').style.display = d.signature_path ? '' : 'none';
                 const idLink = document.getElementById('v_national_id');
                 if (d.national_id_path) {{ idLink.href = '/uploads/' + d.national_id_path; idLink.style.display = ''; }}
-                else { idLink.style.display = 'none'; }
+                else {{ idLink.style.display = 'none'; }}
                 document.getElementById('v_status').innerHTML = d.freeze_status === 'FROZEN' ? '<b style="color:red;">FROZEN</b>' : '<b style="color:green;">ACTIVE</b>';
                 box.style.display = 'block';
             }} else {{ box.style.display = 'none'; }}
@@ -905,7 +901,7 @@ def maker_receipts():
 
 
 # ================================================================
-# APPROVAL ROUTES — FIXED BALANCE HANDLING
+# APPROVAL ROUTES
 # ================================================================
 @app.route('/approve_customer/<cust_id>')
 def approve_customer(cust_id):
@@ -935,7 +931,6 @@ def reject_customer(cust_id):
 
 @app.route('/approve_transaction/<txn_id>')
 def approve_transaction(txn_id):
-    """FIXED: correct balance updates per txn_type."""
     if 'role' not in session or session['role'] not in ['MANAGER', 'CEO']:
         return "🚫 Hayyama Manager Qofa!", 403
     conn = get_db_connection()
@@ -945,7 +940,6 @@ def approve_transaction(txn_id):
 
     if txn and txn['status'] == 'PENDING_MANAGER':
         cursor.execute("UPDATE transactions SET status = 'APPROVED' WHERE txn_id = ?", (txn_id,))
-
         t_type = txn['txn_type']
         amt = txn['amount'] or 0.0
         comm = txn['commission'] or 0.0
@@ -953,19 +947,13 @@ def approve_transaction(txn_id):
         target = txn['target_account']
 
         if t_type == 'DEPOSIT':
-            # Money comes in — customer balance increases
             cursor.execute("UPDATE customers SET balance = balance + ? WHERE customer_id = ?", (amt, cust_id))
         elif t_type == 'WITHDRAWAL':
-            # Money goes out — deduct amount + commission
             cursor.execute("UPDATE customers SET balance = balance - ? WHERE customer_id = ?", (amt + comm, cust_id))
         elif t_type == 'T24_TRANSFER':
-            # Sender loses amount + commission, receiver gains amount
             cursor.execute("UPDATE customers SET balance = balance - ? WHERE customer_id = ?", (amt + comm, cust_id))
             if target:
                 cursor.execute("UPDATE customers SET balance = balance + ? WHERE customer_id = ?", (amt, target))
-        # RTGS_TRANSFER: already deducted at creation → no balance change here
-        # MOBILE_TOPUP_REC / WALLET_TOPUP: already credited at creation
-
         conn.commit()
         add_notification(f"✅ Txn {txn_id} ({t_type}) mirkanaa'eera.")
 
@@ -975,7 +963,6 @@ def approve_transaction(txn_id):
 
 @app.route('/reject_transaction/<txn_id>')
 def reject_transaction(txn_id):
-    """FIXED: refund RTGS sender since it was deducted at creation."""
     if 'role' not in session or session['role'] not in ['MANAGER', 'CEO']:
         return "🚫 Hayyama Manager Qofa!", 403
     conn = get_db_connection()
@@ -985,7 +972,6 @@ def reject_transaction(txn_id):
 
     if txn and txn['status'] == 'PENDING_MANAGER':
         cursor.execute("UPDATE transactions SET status = 'REJECTED' WHERE txn_id = ?", (txn_id,))
-        # RTGS was deducted upfront → refund sender
         if txn['txn_type'] == 'RTGS_TRANSFER':
             cursor.execute(
                 "UPDATE customers SET balance = balance + ? WHERE customer_id = ?",
@@ -1161,7 +1147,7 @@ def pending():
 
 
 # ================================================================
-# CUSTOMER LIST (rich, from app(1)) + PIN reset (from app(2))
+# CUSTOMER LIST
 # ================================================================
 @app.route('/customers')
 def customers():
@@ -1950,7 +1936,6 @@ def agent_register():
             cust_id = str(START_ID) if max_id is None or max_id < START_ID else str(max_id + 1)
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # FIX: balance=0.0 — deposit approval will credit it
             cursor.execute("""
                 INSERT INTO customers (customer_id, full_name, phone, gender, account_type,
                     photo_path, signature_path, balance, status, created_at)
@@ -2121,7 +2106,7 @@ def islamic_loan():
 
 
 # ================================================================
-# 📱 MOBILE BANKING MODULE
+# MOBILE BANKING
 # ================================================================
 @app.route('/mobile_login', methods=['GET', 'POST'])
 def mobile_login():
@@ -2196,7 +2181,6 @@ def mobile_dashboard():
     cursor.execute("SELECT txn_id, txn_type, amount, bank_name, status, timestamp, ft_reference FROM transactions WHERE customer_id = ? ORDER BY timestamp DESC LIMIT 5", (cust_id,))
     recent = cursor.fetchall()
 
-    # Detect new incoming transfers since last visit
     play_incoming = False
     last_check = session.get('mobile_last_check') or '1970-01-01 00:00:00'
     cursor.execute(
@@ -2299,7 +2283,6 @@ def mobile_transfer():
             txn_out_id = f"TXN-MOB-{random.randint(100000, 999999)}"
             txn_in_id = f"TXN-MOB-REC-{random.randint(100000, 999999)}"
 
-            # Balance: sender loses, receiver gains — atomic
             cursor.execute("UPDATE customers SET balance = balance - ? WHERE customer_id = ?", (amount, sender_id))
             cursor.execute("UPDATE customers SET balance = balance + ? WHERE customer_id = ?", (amount, target_acc))
 
@@ -2431,7 +2414,6 @@ def mobile_rtgs():
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ft_ref = f"RTGS{datetime.datetime.now().strftime('%y%j')}{random.randint(100000, 999999)}"
             txn_id = f"TXN-RTGS-{random.randint(100000, 999999)}"
-            # Deduct upfront (held while pending)
             cursor.execute("UPDATE customers SET balance = balance - ? WHERE customer_id = ?", (total, sender_id))
             cursor.execute("""
                 INSERT INTO transactions (txn_id, txn_type, customer_id, customer_name, target_account,
